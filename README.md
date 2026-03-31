@@ -6,10 +6,10 @@
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker" alt="Docker" />
 </p>
 
-<h1 align="center">InfraBoard</h1>
+<h1 align="center">InfraDash</h1>
 
 <p align="center">
-  <strong>A modern, self-hosted infrastructure management dashbo  ard</strong>
+  <strong>A modern, self-hosted infrastructure management dashboard</strong>
   <br />
   Track servers, VMs, disks, IPs, and network connections with a beautiful visual workspace.
 </p>
@@ -55,22 +55,21 @@
 
 ## Screenshots
 
-<details>
-<summary>📸 Click to view screenshots</summary>
-
 ### Dashboard
+![Dashboard](https://i.ibb.co/zTK2yr5b/image.png)
 > Overview with stats cards showing servers, VMs, storage, and IPs
 
 ### Visual Workspace
+![Visual Workspace](https://i.ibb.co/N6BY9JXq/image.png)
 > 2D canvas with draggable nodes representing your infrastructure hierarchy
 
 ### Network Connections
+![Network Connections](https://i.ibb.co/TDHSpmrM/image.png)
 > Manage uplinks with custom colors, bandwidth, and types
 
 ### User Management
+![User Management](https://i.ibb.co/N2gVpvtt/image.png)
 > Admin panel for creating and managing users
-
-</details>
 
 ---
 
@@ -85,8 +84,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/infraboard.git
-cd infraboard
+git clone https://github.com/M4xyll/infradash.git
+cd infradash
 
 # Copy environment file
 cp .env.example .env
@@ -95,7 +94,7 @@ cp .env.example .env
 docker-compose up -d --build
 
 # Run database migrations and seed
-docker exec -it $(docker ps -qf "name=backend") npx prisma migrate deploy
+docker exec -it $(docker ps -qf "name=backend") npx prisma migrate dev --name init
 docker exec -it $(docker ps -qf "name=backend") npx prisma db seed
 ```
 
@@ -200,7 +199,7 @@ server {
 ## Project Structure
 
 ```
-infraboard/
+infradash/
 ├── docker-compose.yml          # Container orchestration
 ├── .env.example                 # Environment template
 │
@@ -348,7 +347,10 @@ npx prisma studio
 ---
 
 ## Roadmap
-
+- [X] **VM Support** - BYO VMs to quickly monitor your services
+- [X] **Server Support** - BYO Servers to connect them to your VMs
+- [X] **IP Integration** - Add your IPs to monitor used or not
+- [X] **2D Draggable Canvas** - Quickly view your services in a detailed canvas
 - [ ] **Monitoring Integration** — CPU, RAM, disk usage stats
 - [ ] **Alerts & Notifications** — Email/webhook alerts for issues
 - [ ] **Proxmox Sync** — Auto-import VMs from Proxmox API
