@@ -351,11 +351,10 @@ npx prisma studio
 - [X] **Server Support** - BYO Servers to connect them to your VMs
 - [X] **IP Integration** - Add your IPs to monitor used or not
 - [X] **2D Draggable Canvas** - Quickly view your services in a detailed canvas
-- [ ] **Monitoring Integration** — CPU, RAM, disk usage stats
-- [ ] **Alerts & Notifications** — Email/webhook alerts for issues
-- [ ] **Proxmox Sync** — Auto-import VMs from Proxmox API
-- [ ] **Pelican Panel Sync** — Auto-import game servers
 - [ ] **Export/Import** — Backup and restore configurations
+- [ ] **Monitoring Integration** — CPU, RAM, disk usage stats
+- [ ] **3D Workspace Canvas** - Overkill feature just for fun
+- [ ] **Proxmox Sync** — Auto-import VMs from Proxmox API
 - [ ] **Audit Logs** — Track who changed what and when
 - [ ] **Multi-tenancy** — Separate workspaces for teams
 - [ ] **API Keys** — Programmatic access without JWT
