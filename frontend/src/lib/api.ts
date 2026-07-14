@@ -116,6 +116,8 @@ export interface Stats {
   reservedIPs: number;
   totalStorage: number;
   totalBandwidth: number;
+  allocatedBandwidth: number;
+  availableBandwidth: number;
 }
 
 export interface GraphConnection {

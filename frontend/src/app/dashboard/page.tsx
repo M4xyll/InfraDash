@@ -50,7 +50,7 @@ export default function OverviewPage() {
             { label: 'Servers', value: stats.totalServers, caption: 'Physical or host-level nodes on record', icon: <ServerIcon className="h-5 w-5" /> },
             { label: 'Virtual machines', value: stats.totalVMs, caption: 'Guest systems attached to the estate', icon: <VmIcon className="h-5 w-5" /> },
             { label: 'Storage', value: formatBytes(stats.totalStorage), caption: 'Total provisioned capacity', icon: <DatabaseStackIcon className="h-5 w-5" /> },
-            { label: 'Bandwidth', value: formatBandwidth(stats.totalBandwidth), caption: 'Declared network throughput', icon: <LinkIcon className="h-5 w-5" /> },
+            { label: 'Uplink capacity', value: formatBandwidth(stats.totalBandwidth), caption: 'Total server uplink capacity', icon: <LinkIcon className="h-5 w-5" /> },
           ]}
         />
       ) : null}

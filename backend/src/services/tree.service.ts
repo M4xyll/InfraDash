@@ -10,7 +10,8 @@ export async function getInfrastructureSummary() {
     inUseIPs,
     reservedIPs,
     storageAggregate,
-    bandwidthAggregate,
+    serverBandwidthAggregate,
+    vmBandwidthAggregate,
   ] = await Promise.all([
     prisma.server.count(),
     prisma.vM.count(),
@@ -20,8 +21,23 @@ export async function getInfrastructureSummary() {
     prisma.iPAddress.count({ where: { status: 'IN_USE' } }),
     prisma.iPAddress.count({ where: { status: 'RESERVED' } }),
     prisma.disk.aggregate({ _sum: { size: true } }),
-    prisma.networkConnection.aggregate({ _sum: { bandwidth: true } }),
+    prisma.networkConnection.aggregate({
+      _sum: { bandwidth: true },
+      where: {
+        serverId: { not: null },
+        vmId: null,
+      },
+    }),
+    prisma.networkConnection.aggregate({
+      _sum: { bandwidth: true },
+      where: {
+        vmId: { not: null },
+      },
+    }),
   ]);
+
+  const totalBandwidth = serverBandwidthAggregate._sum.bandwidth || 0;
+  const allocatedBandwidth = vmBandwidthAggregate._sum.bandwidth || 0;
 
   return {
     totalServers,
@@ -32,7 +48,9 @@ export async function getInfrastructureSummary() {
     inUseIPs,
     reservedIPs,
     totalStorage: storageAggregate._sum.size || 0,
-    totalBandwidth: bandwidthAggregate._sum.bandwidth || 0,
+    totalBandwidth,
+    allocatedBandwidth,
+    availableBandwidth: Math.max(totalBandwidth - allocatedBandwidth, 0),
   };
 }
 

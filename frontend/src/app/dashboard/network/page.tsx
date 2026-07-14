@@ -45,6 +45,7 @@ export default function NetworkPage() {
   const connections = useQuery({ queryKey: ['network-connections'], queryFn: () => infraApi.getConnections(token!), enabled: Boolean(token) });
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => infraApi.getServers(token!), enabled: Boolean(token) });
   const vms = useQuery({ queryKey: ['vms'], queryFn: () => infraApi.getVMs(token!), enabled: Boolean(token) });
+  const summary = useQuery({ queryKey: ['summary'], queryFn: () => infraApi.getSummary(token!), enabled: Boolean(token) });
 
   const saveMutation = useMutation({
     mutationFn: (payload: Partial<NetworkConnection>) =>
@@ -135,7 +136,9 @@ export default function NetworkPage() {
           { label: 'Visible links', value: visible.length, caption: 'Connections matching current search', icon: <LinkIcon className="h-5 w-5" /> },
           { label: 'Server uplinks', value: visible.filter((item) => item.serverId && !item.vmId).length, caption: 'Host-level links in the current set', icon: <ServerIcon className="h-5 w-5" /> },
           { label: 'VM links', value: visible.filter((item) => item.vmId).length, caption: 'Guest-level links in the current set', icon: <VmIcon className="h-5 w-5" /> },
-          { label: 'Declared throughput', value: formatBandwidth(visible.reduce((sum, item) => sum + item.bandwidth, 0)), caption: 'Aggregate bandwidth across visible links', icon: <NetworkIcon className="h-5 w-5" /> },
+          { label: 'Uplink capacity', value: formatBandwidth(summary.data?.data.totalBandwidth || 0), caption: 'Total server uplink capacity', icon: <NetworkIcon className="h-5 w-5" /> },
+          { label: 'VM allocation', value: formatBandwidth(summary.data?.data.allocatedBandwidth || 0), caption: 'Bandwidth allocated to VMs', icon: <VmIcon className="h-5 w-5" /> },
+          { label: 'Available', value: formatBandwidth(summary.data?.data.availableBandwidth || 0), caption: 'Remaining capacity', icon: <ServerIcon className="h-5 w-5" /> },
         ]}
       />
       <Panel
