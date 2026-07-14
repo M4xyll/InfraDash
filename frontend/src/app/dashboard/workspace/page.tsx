@@ -224,6 +224,29 @@ const nodeTypes = {
   workspaceNode: WorkspaceNode,
 };
 
+function attachMonitoringToNodes(nodes: Node[], monitoringMap: Map<string, MonitoringStatus>) {
+  return nodes.map((node) => {
+    if (!node.id.startsWith('server-')) return node;
+
+    const serverId = node.id.replace('server-', '');
+    const monitoring = monitoringMap.get(serverId);
+
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        monitoring: {
+          configured: monitoring?.configured || false,
+          online: monitoring?.online || false,
+          cpu: monitoring?.latest?.cpu.usagePercent,
+          memory: monitoring?.latest?.memory.usagePercent,
+          storage: monitoring?.latest?.storage.usagePercent,
+        },
+      },
+    };
+  });
+}
+
 function toFlow(
   tree: Server[],
   networkConnections: GraphConnection[],
@@ -702,6 +725,9 @@ function WorkspaceCanvas2D({
   const initial = useMemo(() => {
     return toFlow(graphData.tree || [], graphData.networkConnections || [], savedMap, monitoringMap);
   }, [graphData, savedMap, monitoringMap]);
+  const structure = useMemo(() => {
+    return toFlow(graphData.tree || [], graphData.networkConnections || [], savedMap, new Map());
+  }, [graphData, savedMap]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
@@ -709,10 +735,14 @@ function WorkspaceCanvas2D({
   const vmCount = graphData.tree.reduce((sum, server) => sum + (server.vms?.length || 0), 0);
 
   useEffect(() => {
-    setNodes(initial.nodes);
-    setEdges(initial.edges);
+    setNodes(attachMonitoringToNodes(structure.nodes, monitoringMap));
+    setEdges(structure.edges);
     setTimeout(() => fitView({ padding: 0.18 }), 50);
-  }, [fitView, initial.edges, initial.nodes, setEdges, setNodes]);
+  }, [fitView, monitoringMap, setEdges, setNodes, structure.edges, structure.nodes]);
+
+  useEffect(() => {
+    setNodes((current) => attachMonitoringToNodes(current, monitoringMap));
+  }, [monitoringMap, setNodes]);
 
   useEffect(() => {
     if (!nodes.length) return;
