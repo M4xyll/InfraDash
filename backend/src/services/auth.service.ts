@@ -78,6 +78,10 @@ export async function getAllUsers() {
   });
 }
 
+export async function getUserCount() {
+  return prisma.user.count();
+}
+
 export async function updateUserRole(id: string, role: 'ADMIN' | 'OPERATOR' | 'VIEWER') {
   return prisma.user.update({
     where: { id },
@@ -122,6 +126,16 @@ export async function createUser(
   });
 
   return user;
+}
+
+export async function createInitialAdmin(email: string, password: string, name: string) {
+  const userCount = await prisma.user.count();
+
+  if (userCount > 0) {
+    throw new Error('Initial setup already completed');
+  }
+
+  return createUser(email, password, name, 'ADMIN');
 }
 
 export async function updateUser(

@@ -17,9 +17,9 @@ RUN npm run build
 FROM node:20-alpine AS runner
 RUN apk add --no-cache openssl
 WORKDIR /app
-ENV NODE_ENV=production
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --include=dev
+ENV NODE_ENV=production
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma

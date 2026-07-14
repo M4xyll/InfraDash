@@ -8,6 +8,7 @@ interface AuthContextValue {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  completeSetup: (payload: { name: string; email: string; password: string }) => Promise<void>;
   logout: () => void;
   canCreate: boolean;
   canUpdate: boolean;
@@ -46,6 +47,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('infradash-token', response.data.token);
   }
 
+  async function completeSetup(payload: { name: string; email: string; password: string }) {
+    const response = await authApi.initializeSetup(payload);
+    setUser(response.data.user);
+    setToken(response.data.token);
+    localStorage.setItem('infradash-token', response.data.token);
+  }
+
   function logout() {
     setUser(null);
     setToken(null);
@@ -58,6 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     token,
     loading,
     login,
+    completeSetup,
     logout,
     canCreate: role === 'ADMIN' || role === 'OPERATOR',
     canUpdate: role === 'ADMIN' || role === 'OPERATOR',

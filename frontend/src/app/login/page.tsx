@@ -2,7 +2,9 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
+import { authApi } from '@/lib/api';
 import { LockSecureIcon, NetworkIcon, ServerIcon, SparkIcon } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,6 +17,15 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const setupStatus = useQuery({
+    queryKey: ['setup-status'],
+    queryFn: () => authApi.getSetupStatus(),
+  });
+
+  if (setupStatus.data?.data.needsSetup) {
+    router.replace('/setup');
+    return null;
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();

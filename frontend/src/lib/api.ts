@@ -228,7 +228,18 @@ export interface AuditLogEntry {
   details?: Record<string, unknown>;
 }
 
+export interface SetupStatus {
+  needsSetup: boolean;
+}
+
 export const authApi = {
+  getSetupStatus: () =>
+    api<{ success: boolean; data: SetupStatus }>('/auth/setup/status'),
+  initializeSetup: (body: { email: string; password: string; name: string }) =>
+    api<{ success: boolean; data: { user: User; token: string } }>('/auth/setup/initialize', {
+      method: 'POST',
+      body,
+    }),
   login: (email: string, password: string) =>
     api<{ success: boolean; data: { user: User; token: string } }>('/auth/login', {
       method: 'POST',

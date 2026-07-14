@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
+import { authApi } from '@/lib/api';
 import { AppPreloader } from '@/components/app-preloader';
 import { DashboardContentTransition } from '@/components/dashboard-content-transition';
 import { UndoDeleteStack } from '@/components/undo-delete-card';
@@ -50,16 +52,25 @@ export default function DashboardLayout({
   const { theme, toggleTheme } = useTheme();
   const { items: pendingDeleteItems } = usePendingDeleteOverlay();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const setupStatus = useQuery({
+    queryKey: ['setup-status'],
+    queryFn: () => authApi.getSetupStatus(),
+  });
 
   useEffect(() => {
-    if (!loading && !user) router.replace('/login');
-  }, [loading, router, user]);
+    if (loading || setupStatus.isLoading || !setupStatus.data) return;
+    if (setupStatus.data.data.needsSetup) {
+      router.replace('/setup');
+      return;
+    }
+    if (!user) router.replace('/login');
+  }, [loading, router, setupStatus.data, setupStatus.isLoading, user]);
 
   useEffect(() => {
     setMobileNavOpen(false);
   }, [pathname]);
 
-  if (loading || !user) {
+  if (loading || setupStatus.isLoading || !user) {
     return <AppPreloader mode={loading ? 'loading' : 'redirecting'} />;
   }
 

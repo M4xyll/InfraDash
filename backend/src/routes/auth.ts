@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { body, validationResult } from 'express-validator';
-import { loginUser, getUserById, getAllUsers, createUser, updateUser, deleteUser } from '../services/auth.service.js';
+import { loginUser, getUserById, getAllUsers, createInitialAdmin, createUser, getUserCount, updateUser, deleteUser } from '../services/auth.service.js';
 import { generateToken } from '../utils/jwt.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
@@ -9,6 +9,64 @@ import logger from '../utils/logger.js';
 import { logAudit, logAuditFromRequest } from '../services/audit.service.js';
 
 const router = Router();
+
+router.get('/setup/status', async (_req: AuthRequest, res: Response) => {
+  try {
+    const userCount = await getUserCount();
+    res.json({ success: true, data: { needsSetup: userCount === 0 } });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to get setup status' });
+  }
+});
+
+router.post(
+  '/setup/initialize',
+  [
+    body('email').isEmail().normalizeEmail(),
+    body('password').isLength({ min: 6 }),
+    body('name').trim().isLength({ min: 2 }),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ success: false, errors: errors.array() });
+      return;
+    }
+
+    try {
+      const { email, password, name } = req.body;
+      const user = await createInitialAdmin(email, password, name);
+      const token = generateToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      logger.info(`Initial admin created: ${email}`);
+      await logAudit({
+        actor: {
+          userId: user.id,
+          email: user.email,
+          role: user.role,
+        },
+        request: {
+          ip: req.ip,
+          userAgent: req.get('user-agent') || undefined,
+        },
+        action: 'setup',
+        entityType: 'auth',
+        entityId: user.id,
+        summary: `Initial admin ${user.email} created`,
+      });
+
+      res.status(201).json({ success: true, data: { user, token } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to initialize setup';
+      const status = message === 'Initial setup already completed' ? 403 : 400;
+      res.status(status).json({ success: false, error: message });
+    }
+  }
+);
 
 // Login
 router.post(
