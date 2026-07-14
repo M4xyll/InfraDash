@@ -102,6 +102,20 @@ function readMemoryUsage() {
 }
 
 async function readStorageUsage() {
+  async function readSinglePathUsage(targetPath) {
+    const { stdout } = await execFileAsync('df', ['-kP', targetPath]);
+    const lines = stdout.trim().split('\n');
+    const fields = lines[lines.length - 1].trim().split(/\s+/);
+    const totalBytes = Number(fields[1]) * 1024;
+    const usedBytes = Number(fields[2]) * 1024;
+
+    return {
+      usedBytes,
+      totalBytes,
+      usagePercent: totalBytes > 0 ? Number(((usedBytes / totalBytes) * 100).toFixed(2)) : 0,
+    };
+  }
+
   try {
     const { stdout } = await execFileAsync('df', ['-kP', '-l']);
     const lines = stdout.trim().split('\n').slice(1);
@@ -122,17 +136,25 @@ async function readStorageUsage() {
       usedBytes += Number(fields[2]) * 1024;
     }
 
+    if (totalBytes <= 0) {
+      return readSinglePathUsage('/');
+    }
+
     return {
       usedBytes,
       totalBytes,
       usagePercent: totalBytes > 0 ? Number(((usedBytes / totalBytes) * 100).toFixed(2)) : 0,
     };
   } catch {
-    return {
-      usedBytes: 0,
-      totalBytes: 1,
-      usagePercent: 0,
-    };
+    try {
+      return await readSinglePathUsage('/');
+    } catch {
+      return {
+        usedBytes: 0,
+        totalBytes: 1,
+        usagePercent: 0,
+      };
+    }
   }
 }
 

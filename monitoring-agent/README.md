@@ -31,7 +31,66 @@ Then start the agent:
 npm run start
 ```
 
+## Recommended deployment
+
+Run the agent directly on the host.
+
+That matters for storage reporting:
+- on the host: the agent can see the machine's real disks and filesystems
+- in Docker: the agent usually only sees the container filesystem
+
+## systemd
+
+Example install on a Linux host:
+
+```bash
+sudo mkdir -p /opt/infradash-monitoring-agent
+sudo cp agent.mjs package.json package-lock.json .env /opt/infradash-monitoring-agent/
+cd /opt/infradash-monitoring-agent
+npm install --omit=dev
+```
+
+Create `/etc/systemd/system/infradash-monitoring-agent.service`:
+
+```ini
+[Unit]
+Description=InfraDash Monitoring Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/infradash-monitoring-agent
+ExecStart=/usr/bin/node /opt/infradash-monitoring-agent/agent.mjs
+Restart=always
+RestartSec=5
+User=root
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now infradash-monitoring-agent
+sudo systemctl status infradash-monitoring-agent
+```
+
+To update it later:
+
+```bash
+sudo cp agent.mjs package.json package-lock.json .env /opt/infradash-monitoring-agent/
+cd /opt/infradash-monitoring-agent
+npm install --omit=dev
+sudo systemctl restart infradash-monitoring-agent
+```
+
 ## Docker
+
+Docker is still available, but it is better suited for testing than for full host storage visibility.
 
 Build and run the standalone agent with Docker Compose:
 
@@ -61,20 +120,4 @@ Optional interval override:
 MONITOR_INTERVAL_MS=10000
 ```
 
-## Service example
-
-```ini
-[Unit]
-Description=InfraDash Monitoring Agent
-After=network.target
-
-[Service]
-Environment="MONITOR_API_URL=http://YOUR_DASHBOARD_HOST:3001/api/monitoring/ingest"
-Environment="MONITOR_TOKEN=paste-issued-token-here"
-ExecStart=/usr/bin/node /opt/infradash/monitoring-agent/agent.mjs
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+The host-based `systemd` setup above is the recommended way to run the agent in production.
