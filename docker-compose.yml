@@ -1,9 +1,6 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:16-alpine
-    container_name: infra-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-infrauser}
@@ -12,50 +9,54 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5437:5432"
+      - "${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-infrauser} -d ${POSTGRES_DB:-infra_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - infradash
 
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    container_name: infra-backend
     restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-infrauser}:${POSTGRES_PASSWORD:-infrapass}@db:5432/${POSTGRES_DB:-infra_db}
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      PORT: 3001
-      NODE_ENV: ${NODE_ENV:-development}
-    ports:
-      - "4782:3001"
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      PORT: 3001
+      NODE_ENV: production
+      CORS_ORIGIN: ${CORS_ORIGIN}
     volumes:
-      - ./backend:/app
-      - /app/node_modules
+      - backend_data:/app/data
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    networks:
+      - infradash
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: infra-frontend
     restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4782/api}
-    ports:
-      - "4781:3000"
     depends_on:
       - backend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    networks:
+      - infradash
 
 volumes:
   postgres_data:
+  backend_data:
+
+networks:
+  infradash:

@@ -1,520 +1,259 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from '@/hooks/useAuth'
-import { infraApi, NetworkConnection, VM, Server } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
-import { Plus, MoreHorizontal, Pencil, Trash2, Search, Network, Cloud, Server as ServerIcon, Monitor } from 'lucide-react'
-import { formatBandwidth } from '@/lib/utils'
+import { FormEvent, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { NetworkConnection, infraApi } from '@/lib/api';
+import { useAuth } from '@/hooks/use-auth';
+import { useDeferredDelete } from '@/hooks/use-deferred-delete';
+import { CommentIcon, DeleteIcon, EditIcon, GlobeNetworkIcon, LinkIcon, NetworkIcon, PlusIcon, SearchIcon, ServerIcon, VmIcon } from '@/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Modal, ModalField, ModalFooter, ModalSection } from '@/components/ui/modal';
+import { Select } from '@/components/ui/select';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { formatBandwidth } from '@/lib/utils';
+import { cn } from '@/lib/utils';
+import { MetricStrip, PageIntro, Panel } from '@/components/page-kit';
 
-type UplinkType = 'server' | 'vm'
+type ConnectionForm = {
+  name: string;
+  bandwidth: number;
+  color: string;
+  targetType: 'SERVER' | 'VM';
+  serverId: string;
+  vmId: string;
+  comment: string;
+};
 
 export default function NetworkPage() {
-  const { token, canCreate, canUpdate, canDelete } = useAuth()
-  const queryClient = useQueryClient()
-  const [search, setSearch] = useState('')
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [editingConnection, setEditingConnection] = useState<NetworkConnection | null>(null)
-  const [formData, setFormData] = useState({
+  const { token, canCreate, canUpdate, canDelete } = useAuth();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<NetworkConnection | null>(null);
+  const [form, setForm] = useState<ConnectionForm>({
     name: '',
     bandwidth: 1000,
-    color: '#06b6d4',
-    uplinkType: 'server' as UplinkType,
+    color: '#0f766e',
+    targetType: 'SERVER',
     serverId: '',
     vmId: '',
     comment: '',
-  })
+  });
 
-  // Predefined colors for quick selection
-  const colorPresets = [
-    '#f59e0b', // amber
-    '#3b82f6', // blue
-    '#22c55e', // green
-    '#ef4444', // red
-    '#a855f7', // purple
-    '#ec4899', // pink
-    '#06b6d4', // cyan
-    '#84cc16', // lime
-  ]
+  const connections = useQuery({ queryKey: ['network-connections'], queryFn: () => infraApi.getConnections(token!), enabled: Boolean(token) });
+  const servers = useQuery({ queryKey: ['servers'], queryFn: () => infraApi.getServers(token!), enabled: Boolean(token) });
+  const vms = useQuery({ queryKey: ['vms'], queryFn: () => infraApi.getVMs(token!), enabled: Boolean(token) });
 
-  const { data: connectionsData, isLoading } = useQuery({
-    queryKey: ['network-connections'],
-    queryFn: () => infraApi.getNetworkConnections(token!),
-    enabled: !!token,
-  })
-
-  const { data: serversData } = useQuery({
-    queryKey: ['servers'],
-    queryFn: () => infraApi.getServers(token!),
-    enabled: !!token,
-  })
-
-  const { data: vmsData } = useQuery({
-    queryKey: ['vms'],
-    queryFn: () => infraApi.getVMs(token!),
-    enabled: !!token,
-  })
-
-  const createMutation = useMutation({
-    mutationFn: (data: Partial<NetworkConnection>) => infraApi.createNetworkConnection(token!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['network-connections'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
-      closeDialog()
+  const saveMutation = useMutation({
+    mutationFn: (payload: Partial<NetworkConnection>) =>
+      editing ? infraApi.updateConnection(token!, editing.id, payload) : infraApi.createConnection(token!, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['network-connections'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['graph'] }),
+      ]);
+      setOpen(false);
     },
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<NetworkConnection> }) =>
-      infraApi.updateNetworkConnection(token!, id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['network-connections'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
-      closeDialog()
-    },
-  })
+  });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => infraApi.deleteNetworkConnection(token!, id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['network-connections'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
+    mutationFn: (id: string) => infraApi.deleteConnection(token!, id),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['network-connections'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['graph'] }),
+      ]);
     },
-  })
+  });
 
-  const connections = connectionsData?.data || []
-  const servers = serversData?.data || []
-  const vms = vmsData?.data || []
+  const { hiddenIds, scheduleDelete } = useDeferredDelete<NetworkConnection>({
+    namespace: 'network-connections',
+    getId: (item) => item.id,
+    getLabel: (item) => item.name || 'Unnamed connection',
+    onCommit: async (item) => {
+      await deleteMutation.mutateAsync(item.id);
+    },
+  });
 
-  const filteredConnections = connections.filter((conn) => {
-    return (
-      conn.name?.toLowerCase().includes(search.toLowerCase()) ||
-      conn.server?.name.toLowerCase().includes(search.toLowerCase()) ||
-      conn.vm?.name.toLowerCase().includes(search.toLowerCase()) ||
-      conn.comment?.toLowerCase().includes(search.toLowerCase())
-    )
-  })
+  const connectionList = connections.data?.data || [];
+  const serverList = servers.data?.data || [];
+  const vmList = vms.data?.data || [];
+  const filtered = useMemo(
+    () =>
+      connectionList.filter((item) => {
+        const haystack = `${item.name || ''} ${item.server?.name || ''} ${item.vm?.name || ''} ${item.comment || ''}`;
+        return haystack.toLowerCase().includes(search.toLowerCase());
+      }),
+    [connectionList, search],
+  );
+  const visible = filtered.filter((item) => !hiddenIds.has(item.id));
 
-  const totalBandwidth = connections
-    .filter((conn) => conn.serverId && !conn.vmId)
-    .reduce((acc, conn) => acc + conn.bandwidth, 0)
-
-  const allocatedBandwidth = connections
-    .filter((conn) => conn.vmId)
-    .reduce((acc, conn) => acc + conn.bandwidth, 0)
-
-  const openCreateDialog = () => {
-    setEditingConnection(null)
-    setFormData({
-      name: '',
-      bandwidth: 1000,
-      color: '#06b6d4',
-      uplinkType: 'server',
-      serverId: '',
-      vmId: '',
-      comment: '',
-    })
-    setIsDialogOpen(true)
+  function openCreate() {
+    setEditing(null);
+    setForm({ name: '', bandwidth: 1000, color: '#0f766e', targetType: 'SERVER', serverId: '', vmId: '', comment: '' });
+    setOpen(true);
   }
 
-  const openEditDialog = (conn: NetworkConnection) => {
-    setEditingConnection(conn)
-    // Determine uplink type based on existing data
-    const uplinkType: UplinkType = conn.vmId ? 'vm' : 'server'
-    setFormData({
-      name: conn.name || '',
-      bandwidth: conn.bandwidth,
-      color: conn.color || '#06b6d4',
-      uplinkType,
-      serverId: conn.serverId || '',
-      vmId: conn.vmId || '',
-      comment: conn.comment || '',
-    })
-    setIsDialogOpen(true)
+  function openEdit(item: NetworkConnection) {
+    setEditing(item);
+    setForm({
+      name: item.name || '',
+      bandwidth: item.bandwidth,
+      color: item.color || '#0f766e',
+      targetType: item.vmId ? 'VM' : 'SERVER',
+      serverId: item.serverId || '',
+      vmId: item.vmId || '',
+      comment: item.comment || '',
+    });
+    setOpen(true);
   }
 
-  const closeDialog = () => {
-    setIsDialogOpen(false)
-    setEditingConnection(null)
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const data: Partial<NetworkConnection> = {
-      name: formData.name || undefined,
-      bandwidth: formData.bandwidth,
-      color: formData.color || undefined,
-      comment: formData.comment || undefined,
-      serverId: undefined,
-      vmId: undefined,
-    }
-
-    // Set the appropriate ID based on uplink type
-    if (formData.uplinkType === 'server' && formData.serverId) {
-      data.serverId = formData.serverId
-    } else if (formData.uplinkType === 'vm' && formData.vmId) {
-      data.vmId = formData.vmId
-    }
-
-    if (editingConnection) {
-      updateMutation.mutate({ id: editingConnection.id, data })
-    } else {
-      createMutation.mutate(data)
-    }
-  }
-
-  // Helper to determine uplink type display
-  const getUplinkTypeDisplay = (conn: NetworkConnection) => {
-    if (conn.vmId && conn.vm) {
-      return {
-        type: 'VM Uplink',
-        target: conn.vm.name,
-        icon: Monitor,
-        color: 'text-green-400',
-        bgColor: 'bg-green-500/10',
-      }
-    }
-    if (conn.serverId && conn.server) {
-      return {
-        type: 'Server Uplink',
-        target: conn.server.name,
-        icon: Cloud,
-        color: 'text-cyan-400',
-        bgColor: 'bg-cyan-500/10',
-      }
-    }
-    return null
-  }
-
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this network connection?')) {
-      deleteMutation.mutate(id)
-    }
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    saveMutation.mutate({
+      ...form,
+      serverId: form.serverId || undefined,
+      vmId: form.vmId || undefined,
+    });
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Network Connections</h1>
-          <p className="text-muted-foreground">
-            Total: {formatBandwidth(totalBandwidth)} | Allocated: {formatBandwidth(allocatedBandwidth)}
-          </p>
-        </div>
-        {canCreate && (
-          <Button onClick={openCreateDialog}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Connection
-          </Button>
-        )}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div className="relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search connections..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
+    <div className="space-y-6">
+      <PageIntro
+        eyebrow="Connectivity"
+        icon={<NetworkIcon className="h-4 w-4" />}
+        title="Map declared uplinks and service-level paths."
+        copy="Connections attach either to servers or VMs in the backend. This panel lets you manage those links while keeping throughput and target visible."
+        actions={canCreate ? <Button onClick={openCreate}><PlusIcon className="mr-2 h-4 w-4" />Add connection</Button> : null}
+      />
+      <MetricStrip
+        items={[
+          { label: 'Visible links', value: visible.length, caption: 'Connections matching current search', icon: <LinkIcon className="h-5 w-5" /> },
+          { label: 'Server uplinks', value: visible.filter((item) => item.serverId && !item.vmId).length, caption: 'Host-level links in the current set', icon: <ServerIcon className="h-5 w-5" /> },
+          { label: 'VM links', value: visible.filter((item) => item.vmId).length, caption: 'Guest-level links in the current set', icon: <VmIcon className="h-5 w-5" /> },
+          { label: 'Declared throughput', value: formatBandwidth(visible.reduce((sum, item) => sum + item.bandwidth, 0)), caption: 'Aggregate bandwidth across visible links', icon: <NetworkIcon className="h-5 w-5" /> },
+        ]}
+      />
+      <Panel
+        title="Connection records"
+        icon={<LinkIcon className="h-5 w-5" />}
+        copy="Search by link name, comment, or attached object."
+        toolbar={
+          <div className="relative w-full max-w-sm">
+            <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-text)]" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search network connections…" className="max-w-sm pl-11" />
           </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading...</div>
-          ) : filteredConnections.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              {search ? 'No connections found matching your search.' : 'No network connections yet.'}
+        }
+      >
+        <Table>
+          <THead><TR><TH>Name</TH><TH>Bandwidth</TH><TH>Color</TH><TH>Target</TH><TH>Comment</TH><TH>Actions</TH></TR></THead>
+          <TBody>
+            {visible.map((item) => (
+              <TR key={item.id}>
+                <TD className="font-semibold">{item.name || 'Unnamed'}</TD>
+                <TD>{formatBandwidth(item.bandwidth)}</TD>
+                <TD><span className="inline-block h-5 w-5 rounded-full border" style={{ backgroundColor: item.color || '#0f766e' }} /></TD>
+                <TD>{item.vm?.name || item.server?.name || '-'}</TD>
+                <TD className="max-w-[260px] text-[var(--muted-text)]">{item.comment || '-'}</TD>
+                <TD>
+                  <div className="flex gap-2">
+                    {canUpdate ? <Button variant="ghost" onClick={() => openEdit(item)}><EditIcon className="h-4 w-4" /></Button> : null}
+                    {canDelete ? <Button variant="ghost" onClick={() => scheduleDelete(item)}><DeleteIcon className="h-4 w-4 text-[var(--danger-color)]" /></Button> : null}
+                  </div>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </Panel>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editing ? 'Edit connection' : 'Create connection'}
+        description="Create or edit a connection."
+      >
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <ModalSection title="Connection details" icon={<LinkIcon className="h-4 w-4" />} copy="Main connection settings.">
+            <div className="grid gap-4 md:grid-cols-2">
+              <ModalField label="Connection name" icon={<LinkIcon className="h-4 w-4" />}>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </ModalField>
+              <ModalField label="Bandwidth" icon={<NetworkIcon className="h-4 w-4" />}>
+                <Input type="number" min={1} value={form.bandwidth} onChange={(e) => setForm({ ...form, bandwidth: Number(e.target.value) })} required />
+              </ModalField>
+              <ModalField label="Color" icon={<GlobeNetworkIcon className="h-4 w-4" />}>
+                <Input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="h-12 p-2" />
+              </ModalField>
             </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Color</TableHead>
-                  <TableHead>Bandwidth</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Comment</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredConnections.map((conn) => {
-                  const uplinkInfo = getUplinkTypeDisplay(conn)
-                  return (
-                  <TableRow key={conn.id}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <Network className="h-4 w-4 text-purple-500" />
-                        {conn.name || 'Unnamed'}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div
-                        className="w-6 h-6 rounded-full border border-slate-600"
-                        style={{ backgroundColor: conn.color || '#06b6d4' }}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-mono">
-                        {formatBandwidth(conn.bandwidth)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {uplinkInfo ? (
-                        <Badge variant="outline" className={`${uplinkInfo.bgColor} ${uplinkInfo.color} border-transparent`}>
-                          <uplinkInfo.icon className="h-3 w-3 mr-1" />
-                          {uplinkInfo.type}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {uplinkInfo?.target || '-'}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate">
-                      {conn.comment || '-'}
-                    </TableCell>
-                    <TableCell>
-                      {(canUpdate || canDelete) && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {canUpdate && (
-                              <DropdownMenuItem onClick={() => openEditDialog(conn)}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Edit
-                              </DropdownMenuItem>
-                            )}
-                            {canDelete && (
-                              <DropdownMenuItem
-                                onClick={() => handleDelete(conn.id)}
-                                className="text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editingConnection ? 'Edit Network Connection' : 'Add Network Connection'}
-            </DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Main Uplink"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="bandwidth">Bandwidth (Mbps)</Label>
-              <Input
-                id="bandwidth"
-                type="number"
-                min="1"
-                value={formData.bandwidth}
-                onChange={(e) => setFormData({ ...formData, bandwidth: parseInt(e.target.value) || 1 })}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Color (for workspace visualization)</Label>
-              <div className="flex items-center gap-3">
-                <div className="flex gap-1.5 flex-wrap">
-                  {colorPresets.map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, color })}
-                      className={`w-7 h-7 rounded-full border-2 transition-all ${
-                        formData.color === color
-                          ? 'border-white scale-110'
-                          : 'border-transparent hover:border-slate-500'
-                      }`}
-                      style={{ backgroundColor: color }}
-                    />
-                  ))}
-                </div>
-                <Input
-                  type="color"
-                  value={formData.color}
-                  onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                  className="w-10 h-8 p-0.5 cursor-pointer"
-                />
-              </div>
-            </div>
-
-            {/* Uplink Type Selection */}
-            <div className="space-y-3">
-              <Label>Uplink Type</Label>
-              <div className="grid grid-cols-2 gap-3">
+          </ModalSection>
+          <ModalSection title="Target" icon={<NetworkIcon className="h-4 w-4" />} copy="Choose where this connection goes.">
+            <div className="space-y-4">
+              <div className="inline-flex rounded-full border bg-[var(--surface-strong)] p-1">
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, uplinkType: 'server', vmId: '' })}
-                  className={`p-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
-                    formData.uplinkType === 'server'
-                      ? 'border-cyan-500 bg-cyan-500/10'
-                      : 'border-slate-700 hover:border-slate-600'
-                  }`}
+                  className={cn(
+                    'rounded-full px-4 py-2 text-sm font-semibold transition',
+                    form.targetType === 'SERVER'
+                      ? 'bg-[var(--text-color)] text-[var(--surface-strong)]'
+                      : 'text-[var(--muted-text)]',
+                  )}
+                  onClick={() => setForm({ ...form, targetType: 'SERVER', vmId: '' })}
                 >
-                  <div className="flex items-center gap-2">
-                    <Cloud className={`h-5 w-5 ${formData.uplinkType === 'server' ? 'text-cyan-400' : 'text-slate-400'}`} />
-                    <ServerIcon className={`h-5 w-5 ${formData.uplinkType === 'server' ? 'text-blue-400' : 'text-slate-400'}`} />
-                  </div>
-                  <span className={`text-sm font-medium ${formData.uplinkType === 'server' ? 'text-white' : 'text-slate-400'}`}>
-                    Server Uplink
-                  </span>
-                  <span className="text-xs text-slate-500">Internet to Server</span>
+                  <ServerIcon className="mr-2 inline h-4 w-4" />
+                  Server Uplink
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, uplinkType: 'vm', serverId: '' })}
-                  className={`p-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
-                    formData.uplinkType === 'vm'
-                      ? 'border-green-500 bg-green-500/10'
-                      : 'border-slate-700 hover:border-slate-600'
-                  }`}
+                  className={cn(
+                    'rounded-full px-4 py-2 text-sm font-semibold transition',
+                    form.targetType === 'VM'
+                      ? 'bg-[var(--text-color)] text-[var(--surface-strong)]'
+                      : 'text-[var(--muted-text)]',
+                  )}
+                  onClick={() => setForm({ ...form, targetType: 'VM', serverId: '' })}
                 >
-                  <div className="flex items-center gap-2">
-                    <ServerIcon className={`h-5 w-5 ${formData.uplinkType === 'vm' ? 'text-blue-400' : 'text-slate-400'}`} />
-                    <Monitor className={`h-5 w-5 ${formData.uplinkType === 'vm' ? 'text-green-400' : 'text-slate-400'}`} />
-                  </div>
-                  <span className={`text-sm font-medium ${formData.uplinkType === 'vm' ? 'text-white' : 'text-slate-400'}`}>
-                    VM Uplink
-                  </span>
-                  <span className="text-xs text-slate-500">Server to VM</span>
+                  <VmIcon className="mr-2 inline h-4 w-4" />
+                  VM Uplink
                 </button>
               </div>
-            </div>
-
-            {/* Server Selection (for Server Uplink) */}
-            {formData.uplinkType === 'server' && (
-              <div className="space-y-2">
-                <Label>Server</Label>
-                <Select
-                  value={formData.serverId || 'none'}
-                  onValueChange={(value) => setFormData({ ...formData, serverId: value === 'none' ? '' : value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select server" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Select a server...</SelectItem>
-                    {servers.map((server) => (
-                      <SelectItem key={server.id} value={server.id}>
-                        {server.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-slate-500">This connection links the server to the internet</p>
+              <div className="grid gap-4 md:grid-cols-1">
+                {form.targetType === 'SERVER' ? (
+                  <ModalField label="Server target" icon={<ServerIcon className="h-4 w-4" />}>
+                    <Select value={form.serverId} onChange={(e) => setForm({ ...form, serverId: e.target.value, vmId: '' })}>
+                      <option value="">Select a server</option>
+                      {serverList.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                    </Select>
+                  </ModalField>
+                ) : (
+                  <ModalField label="VM target" icon={<VmIcon className="h-4 w-4" />}>
+                    <Select value={form.vmId} onChange={(e) => setForm({ ...form, vmId: e.target.value, serverId: '' })}>
+                      <option value="">Select a VM</option>
+                      {vmList.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                    </Select>
+                  </ModalField>
+                )}
               </div>
-            )}
-
-            {/* VM Selection (for VM Uplink) */}
-            {formData.uplinkType === 'vm' && (
-              <div className="space-y-2">
-                <Label>Virtual Machine</Label>
-                <Select
-                  value={formData.vmId || 'none'}
-                  onValueChange={(value) => setFormData({ ...formData, vmId: value === 'none' ? '' : value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select VM" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Select a VM...</SelectItem>
-                    {vms.map((vm) => (
-                      <SelectItem key={vm.id} value={vm.id}>
-                        {vm.name} ({vm.server?.name})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-slate-500">This connection links the VM to its parent server</p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="comment">Comment</Label>
-              <Input
-                id="comment"
-                value={formData.comment}
-                onChange={(e) => setFormData({ ...formData, comment: e.target.value })}
-                placeholder="Optional notes"
-              />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeDialog}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
-                {editingConnection ? 'Update' : 'Create'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+          </ModalSection>
+          <ModalSection title="Notes" icon={<CommentIcon className="h-4 w-4" />}>
+            <ModalField label="Comment" icon={<CommentIcon className="h-4 w-4" />}>
+              <Textarea value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} />
+            </ModalField>
+          </ModalSection>
+          <ModalFooter>
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit">{saveMutation.isPending ? 'Saving…' : 'Save'}</Button>
+          </ModalFooter>
+        </form>
+      </Modal>
     </div>
-  )
+  );
 }

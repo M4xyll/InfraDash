@@ -13,6 +13,9 @@ import ipRoutes from './routes/ips.js';
 import networkRoutes from './routes/network.js';
 import treeRoutes from './routes/tree.js';
 import workspaceRoutes from './routes/workspace.js';
+import backupRoutes from './routes/backups.js';
+import auditLogRoutes from './routes/audit-logs.js';
+import monitoringRoutes from './routes/monitoring.js';
 
 const app = express();
 
@@ -21,7 +24,7 @@ app.use(cors({
   origin: config.cors.origin,
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // Request logging
 app.use((req, res, next) => {
@@ -46,6 +49,9 @@ app.use('/api/ips', ipRoutes);
 app.use('/api/network-connections', networkRoutes);
 app.use('/api/tree', treeRoutes);
 app.use('/api/workspace', workspaceRoutes);
+app.use('/api/backups', backupRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/monitoring', monitoringRoutes);
 
 // Error handling
 app.use(notFoundHandler);

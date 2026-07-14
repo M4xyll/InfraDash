@@ -1,12 +1,12 @@
 import { Router, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { AuthRequest } from '../types/index.js';
+import { prisma } from '../lib/prisma.js';
+import { logAuditFromRequest } from '../services/audit.service.js';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get all VMs
 router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
@@ -75,6 +75,13 @@ router.post(
         data: { name, serverId, comment },
         include: { server: { select: { id: true, name: true } } },
       });
+      await logAuditFromRequest(req, {
+        action: 'create',
+        entityType: 'vm',
+        entityId: vm.id,
+        summary: `Created VM ${vm.name}`,
+        details: { server: vm.server?.name },
+      });
       res.status(201).json({ success: true, data: vm });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to create VM' });
@@ -106,6 +113,13 @@ router.put(
         data: { name, serverId, comment },
         include: { server: { select: { id: true, name: true } } },
       });
+      await logAuditFromRequest(req, {
+        action: 'update',
+        entityType: 'vm',
+        entityId: vm.id,
+        summary: `Updated VM ${vm.name}`,
+        details: { server: vm.server?.name },
+      });
       res.json({ success: true, data: vm });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to update VM' });
@@ -120,7 +134,13 @@ router.delete(
   requirePermission('delete'),
   async (req: AuthRequest, res: Response) => {
     try {
-      await prisma.vM.delete({ where: { id: req.params.id } });
+      const vm = await prisma.vM.delete({ where: { id: req.params.id } });
+      await logAuditFromRequest(req, {
+        action: 'delete',
+        entityType: 'vm',
+        entityId: vm.id,
+        summary: `Deleted VM ${vm.name}`,
+      });
       res.json({ success: true, message: 'VM deleted' });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to delete VM' });

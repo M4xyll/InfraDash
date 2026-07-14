@@ -1,12 +1,12 @@
 import { Router, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { AuthRequest } from '../types/index.js';
+import { prisma } from '../lib/prisma.js';
+import { logAuditFromRequest } from '../services/audit.service.js';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get all network connections
 router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
@@ -82,6 +82,13 @@ router.post(
           vm: { select: { id: true, name: true } },
         },
       });
+      await logAuditFromRequest(req, {
+        action: 'create',
+        entityType: 'network-connection',
+        entityId: connection.id,
+        summary: `Created network connection ${connection.name || connection.id}`,
+        details: { bandwidth: connection.bandwidth, server: connection.server?.name, vm: connection.vm?.name },
+      });
       res.status(201).json({ success: true, data: connection });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to create network connection' });
@@ -119,6 +126,13 @@ router.put(
           vm: { select: { id: true, name: true } },
         },
       });
+      await logAuditFromRequest(req, {
+        action: 'update',
+        entityType: 'network-connection',
+        entityId: connection.id,
+        summary: `Updated network connection ${connection.name || connection.id}`,
+        details: { bandwidth: connection.bandwidth, server: connection.server?.name, vm: connection.vm?.name },
+      });
       res.json({ success: true, data: connection });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to update network connection' });
@@ -133,7 +147,14 @@ router.delete(
   requirePermission('delete'),
   async (req: AuthRequest, res: Response) => {
     try {
-      await prisma.networkConnection.delete({ where: { id: req.params.id } });
+      const connection = await prisma.networkConnection.delete({ where: { id: req.params.id } });
+      await logAuditFromRequest(req, {
+        action: 'delete',
+        entityType: 'network-connection',
+        entityId: connection.id,
+        summary: `Deleted network connection ${connection.name || connection.id}`,
+        details: { bandwidth: connection.bandwidth },
+      });
       res.json({ success: true, message: 'Network connection deleted' });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to delete network connection' });

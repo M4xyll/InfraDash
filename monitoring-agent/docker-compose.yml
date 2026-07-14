@@ -1,0 +1,9 @@
+services:
+  monitoring-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: infradash-monitoring-agent
+    restart: unless-stopped
+    env_file:
+      - .env

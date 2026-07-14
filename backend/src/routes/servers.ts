@@ -1,12 +1,12 @@
 import { Router, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { AuthRequest } from '../types/index.js';
+import { prisma } from '../lib/prisma.js';
+import { logAuditFromRequest } from '../services/audit.service.js';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get all servers
 router.get('/', authenticate, async (_req: AuthRequest, res: Response) => {
@@ -75,6 +75,13 @@ router.post(
       const server = await prisma.server.create({
         data: { name, location, comment },
       });
+      await logAuditFromRequest(req, {
+        action: 'create',
+        entityType: 'server',
+        entityId: server.id,
+        summary: `Created server ${server.name}`,
+        details: { location: server.location },
+      });
       res.status(201).json({ success: true, data: server });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to create server' });
@@ -105,6 +112,13 @@ router.put(
         where: { id: req.params.id },
         data: { name, location, comment },
       });
+      await logAuditFromRequest(req, {
+        action: 'update',
+        entityType: 'server',
+        entityId: server.id,
+        summary: `Updated server ${server.name}`,
+        details: { location: server.location },
+      });
       res.json({ success: true, data: server });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to update server' });
@@ -119,7 +133,13 @@ router.delete(
   requirePermission('delete'),
   async (req: AuthRequest, res: Response) => {
     try {
-      await prisma.server.delete({ where: { id: req.params.id } });
+      const server = await prisma.server.delete({ where: { id: req.params.id } });
+      await logAuditFromRequest(req, {
+        action: 'delete',
+        entityType: 'server',
+        entityId: server.id,
+        summary: `Deleted server ${server.name}`,
+      });
       res.json({ success: true, message: 'Server deleted' });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to delete server' });

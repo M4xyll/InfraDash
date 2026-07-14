@@ -1,26 +1,18 @@
-'use client'
+'use client';
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { useAuth } from '@/hooks/useAuth'
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { AppPreloader } from '@/components/app-preloader';
+import { useAuth } from '@/hooks/use-auth';
 
-export default function Home() {
-  const router = useRouter()
-  const { user, isLoading } = useAuth()
+export default function HomePage() {
+  const router = useRouter();
+  const { user, loading } = useAuth();
 
   useEffect(() => {
-    if (!isLoading) {
-      if (user) {
-        router.push('/dashboard')
-      } else {
-        router.push('/login')
-      }
-    }
-  }, [user, isLoading, router])
+    if (loading) return;
+    router.replace(user ? '/dashboard' : '/login');
+  }, [loading, router, user]);
 
-  return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-pulse text-muted-foreground">Loading...</div>
-    </div>
-  )
+  return <AppPreloader mode={loading ? 'loading' : 'redirecting'} />;
 }

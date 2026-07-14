@@ -1,398 +1,189 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRouter } from 'next/navigation'
-import { useAuth } from '@/hooks/useAuth'
-import { userApi, User } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
-import {
-  Plus,
-  MoreHorizontal,
-  Pencil,
-  Trash2,
-  Search,
-  Shield,
-  UserCog,
-  Eye,
-  Users,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
-
-const roleConfig = {
-  ADMIN: {
-    icon: Shield,
-    label: 'Admin',
-    color: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  },
-  OPERATOR: {
-    icon: UserCog,
-    label: 'Operator',
-    color: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  },
-  VIEWER: {
-    icon: Eye,
-    label: 'Viewer',
-    color: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-  },
-}
+import { FormEvent, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
+import { User, authApi } from '@/lib/api';
+import { useAuth } from '@/hooks/use-auth';
+import { useDeferredDelete } from '@/hooks/use-deferred-delete';
+import { DeleteIcon, EditIcon, LockSecureIcon, MailIcon, PlusIcon, SearchIcon, ShieldIcon, UserSingleIcon, UsersIcon } from '@/components/icons';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Modal, ModalField, ModalFooter, ModalSection } from '@/components/ui/modal';
+import { Select } from '@/components/ui/select';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { formatDate } from '@/lib/utils';
+import { MetricStrip, PageIntro, Panel } from '@/components/page-kit';
 
 export default function UsersPage() {
-  const { token, isAdmin, user: currentUser } = useAuth()
-  const router = useRouter()
-  const queryClient = useQueryClient()
-  const [search, setSearch] = useState('')
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<User | null>(null)
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    role: 'VIEWER' as 'ADMIN' | 'OPERATOR' | 'VIEWER',
-  })
+  const { token, isAdmin, user: currentUser } = useAuth();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<User | null>(null);
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'VIEWER' });
 
-  // Redirect non-admins
   if (!isAdmin) {
-    router.push('/dashboard')
-    return null
+    router.replace('/dashboard');
+    return null;
   }
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => userApi.getAll(token!),
-    enabled: !!token,
-  })
+  const users = useQuery({ queryKey: ['users'], queryFn: () => authApi.getUsers(token!), enabled: Boolean(token) });
 
-  const createMutation = useMutation({
-    mutationFn: (data: { email: string; password: string; name: string; role: string }) =>
-      userApi.create(token!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] })
-      closeDialog()
+  const saveMutation = useMutation({
+    mutationFn: (payload: typeof form) =>
+      editing
+        ? authApi.updateUser(token!, editing.id, {
+            name: payload.name,
+            email: payload.email,
+            role: payload.role as User['role'],
+            ...(payload.password ? { password: payload.password } : {}),
+          })
+        : authApi.createUser(token!, payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['users'] });
+      setOpen(false);
     },
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; email?: string; role?: string } }) =>
-      userApi.update(token!, id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] })
-      closeDialog()
-    },
-  })
+  });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => userApi.delete(token!, id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] })
+    mutationFn: (id: string) => authApi.deleteUser(token!, id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['users'] });
     },
-  })
+  });
 
-  const users = data?.data || []
-  const filteredUsers = users.filter(
-    (u) =>
-      u.name.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase())
-  )
+  const { hiddenIds, scheduleDelete } = useDeferredDelete<User>({
+    namespace: 'users',
+    getId: (item) => item.id,
+    getLabel: (item) => item.email,
+    onCommit: async (item) => {
+      await deleteMutation.mutateAsync(item.id);
+    },
+  });
 
-  const openCreateDialog = () => {
-    setEditingUser(null)
-    setFormData({ name: '', email: '', password: '', role: 'VIEWER' })
-    setIsDialogOpen(true)
+  const list = users.data?.data || [];
+  const filtered = useMemo(
+    () => list.filter((item) => `${item.name} ${item.email}`.toLowerCase().includes(search.toLowerCase())),
+    [list, search],
+  );
+  const visible = filtered.filter((item) => !hiddenIds.has(item.id));
+
+  function openCreate() {
+    setEditing(null);
+    setForm({ name: '', email: '', password: '', role: 'VIEWER' });
+    setOpen(true);
   }
 
-  const openEditDialog = (user: User) => {
-    setEditingUser(user)
-    setFormData({
-      name: user.name,
-      email: user.email,
-      password: '',
-      role: user.role,
-    })
-    setIsDialogOpen(true)
+  function openEdit(item: User) {
+    setEditing(item);
+    setForm({ name: item.name, email: item.email, password: '', role: item.role });
+    setOpen(true);
   }
 
-  const closeDialog = () => {
-    setIsDialogOpen(false)
-    setEditingUser(null)
-    setFormData({ name: '', email: '', password: '', role: 'VIEWER' })
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (editingUser) {
-      const updateData: { name?: string; email?: string; role?: string } = {
-        name: formData.name,
-        email: formData.email,
-        role: formData.role,
-      }
-      updateMutation.mutate({ id: editingUser.id, data: updateData })
-    } else {
-      createMutation.mutate(formData)
-    }
-  }
-
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this user?')) {
-      deleteMutation.mutate(id)
-    }
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    saveMutation.mutate(form);
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold gradient-text">User Management</h1>
-          <p className="text-slate-400 mt-1">Manage user accounts and roles</p>
-        </div>
-        <Button
-          onClick={openCreateDialog}
-          className="bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white shadow-lg shadow-blue-500/25"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add User
-        </Button>
-      </div>
-
-      {/* Users Table */}
-      <Card className="glass-card">
-        <div className="p-6 border-b border-slate-800/50">
-          <div className="relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input
-              placeholder="Search users..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 bg-slate-800/50 border-slate-700 focus:border-blue-500"
-            />
+      <PageIntro
+        eyebrow="Identity control"
+        icon={<UsersIcon className="h-4 w-4" />}
+        title="Administer operator access and roles."
+        copy="Manage users and roles."
+        actions={<Button onClick={openCreate}><PlusIcon className="mr-2 h-4 w-4" />Add user</Button>}
+      />
+      <MetricStrip
+        items={[
+          { label: 'Visible users', value: visible.length, caption: 'Accounts matching current search', icon: <UsersIcon className="h-5 w-5" /> },
+          { label: 'Admins', value: list.filter((item) => item.role === 'ADMIN').length, caption: 'Full-access accounts in the system', icon: <ShieldIcon className="h-5 w-5" /> },
+          { label: 'Operators', value: list.filter((item) => item.role === 'OPERATOR').length, caption: 'Create/update access accounts', icon: <UserSingleIcon className="h-5 w-5" /> },
+          { label: 'Viewers', value: list.filter((item) => item.role === 'VIEWER').length, caption: 'Read-only accounts on record', icon: <MailIcon className="h-5 w-5" /> },
+        ]}
+      />
+      <Panel
+        title="User records"
+        icon={<UsersIcon className="h-5 w-5" />}
+        copy="Search, edit, or remove users."
+        toolbar={
+          <div className="relative w-full max-w-sm">
+            <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-text)]" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search users…" className="pl-11" />
           </div>
-        </div>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="text-center py-12 text-slate-400">Loading users...</div>
-          ) : filteredUsers.length === 0 ? (
-            <div className="text-center py-12 text-slate-400">
-              {search ? 'No users found matching your search.' : 'No users yet.'}
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="border-slate-800/50 hover:bg-transparent">
-                  <TableHead className="text-slate-400">User</TableHead>
-                  <TableHead className="text-slate-400">Email</TableHead>
-                  <TableHead className="text-slate-400">Role</TableHead>
-                  <TableHead className="text-slate-400">Created</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredUsers.map((user) => {
-                  const role = roleConfig[user.role]
-                  const RoleIcon = role.icon
-                  const isCurrentUser = user.id === currentUser?.id
-
-                  return (
-                    <TableRow key={user.id} className="border-slate-800/50">
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
-                            <span className="text-sm font-medium text-white">
-                              {user.name.charAt(0).toUpperCase()}
-                            </span>
-                          </div>
-                          <div>
-                            <div className="font-medium text-white flex items-center gap-2">
-                              {user.name}
-                              {isCurrentUser && (
-                                <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-slate-800/50 text-slate-400 border-slate-700">
-                                  You
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-slate-300">{user.email}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={cn('flex items-center gap-1.5 w-fit', role.color)}>
-                          <RoleIcon className="h-3 w-3" />
-                          {role.label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-slate-400">
-                        {user.createdAt
-                          ? new Date(user.createdAt).toLocaleDateString()
-                          : '-'}
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="text-slate-400 hover:text-white">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-slate-900 border-slate-800">
-                            <DropdownMenuItem
-                              onClick={() => openEditDialog(user)}
-                              className="text-slate-300 focus:text-white focus:bg-slate-800 cursor-pointer"
-                            >
-                              <Pencil className="h-4 w-4 mr-2" />
-                              Edit
-                            </DropdownMenuItem>
-                            {!isCurrentUser && (
-                              <DropdownMenuItem
-                                onClick={() => handleDelete(user.id)}
-                                className="text-red-400 focus:text-red-400 focus:bg-red-500/10 cursor-pointer"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Create/Edit Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="bg-slate-900 border-slate-800">
-          <DialogHeader>
-            <DialogTitle className="text-white">
-              {editingUser ? 'Edit User' : 'Create User'}
-            </DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name" className="text-slate-300">Name</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="John Doe"
-                required
-                className="bg-slate-800/50 border-slate-700 focus:border-blue-500"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-slate-300">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                placeholder="john@example.com"
-                required
-                className="bg-slate-800/50 border-slate-700 focus:border-blue-500"
-              />
-            </div>
-            {!editingUser && (
-              <div className="space-y-2">
-                <Label htmlFor="password" className="text-slate-300">Password</Label>
+        }
+      >
+        <Table>
+          <THead><TR><TH>Name</TH><TH>Email</TH><TH>Role</TH><TH>Created</TH><TH>Actions</TH></TR></THead>
+          <TBody>
+            {visible.map((item) => (
+              <TR key={item.id}>
+                <TD className="font-semibold">{item.name}{item.id === currentUser?.id ? ' (You)' : ''}</TD>
+                <TD>{item.email}</TD>
+                <TD><Badge tone={item.role === 'ADMIN' ? 'signal' : item.role === 'OPERATOR' ? 'accent' : 'neutral'}>{item.role}</Badge></TD>
+                <TD>{formatDate(item.createdAt)}</TD>
+                <TD>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" onClick={() => openEdit(item)}><EditIcon className="h-4 w-4" /></Button>
+                    {item.id !== currentUser?.id ? (
+                      <Button variant="ghost" onClick={() => scheduleDelete(item)}>
+                        <DeleteIcon className="h-4 w-4 text-[var(--danger-color)]" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </Panel>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editing ? 'Edit user' : 'Create user'}
+        description="Create or edit a user."
+      >
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <ModalSection title="Account" icon={<UsersIcon className="h-4 w-4" />} copy="User details and access.">
+            <div className="grid gap-4 md:grid-cols-2">
+              <ModalField label="Name" icon={<UserSingleIcon className="h-4 w-4" />}>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+              </ModalField>
+              <ModalField label="Email" icon={<MailIcon className="h-4 w-4" />}>
+                <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+              </ModalField>
+              <ModalField
+                label={editing ? 'New password' : 'Password'}
+                icon={<LockSecureIcon className="h-4 w-4" />}
+                hint={editing ? 'Leave empty to keep the current password.' : undefined}
+              >
                 <Input
-                  id="password"
                   type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="Min. 6 characters"
-                  required
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  required={!editing}
                   minLength={6}
-                  className="bg-slate-800/50 border-slate-700 focus:border-blue-500"
+                  placeholder={editing ? 'Optional password reset' : undefined}
                 />
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label className="text-slate-300">Role</Label>
-              <Select
-                value={formData.role}
-                onValueChange={(value: 'ADMIN' | 'OPERATOR' | 'VIEWER') =>
-                  setFormData({ ...formData, role: value })
-                }
-              >
-                <SelectTrigger className="bg-slate-800/50 border-slate-700 focus:border-blue-500">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-slate-900 border-slate-800">
-                  <SelectItem value="ADMIN" className="focus:bg-slate-800">
-                    <div className="flex items-center gap-2">
-                      <Shield className="h-4 w-4 text-amber-400" />
-                      Admin
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="OPERATOR" className="focus:bg-slate-800">
-                    <div className="flex items-center gap-2">
-                      <UserCog className="h-4 w-4 text-blue-400" />
-                      Operator
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="VIEWER" className="focus:bg-slate-800">
-                    <div className="flex items-center gap-2">
-                      <Eye className="h-4 w-4 text-slate-400" />
-                      Viewer
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              </ModalField>
+              <ModalField label="Role" icon={<ShieldIcon className="h-4 w-4" />}>
+                <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                  <option value="ADMIN">ADMIN</option>
+                  <option value="OPERATOR">OPERATOR</option>
+                  <option value="VIEWER">VIEWER</option>
+                </Select>
+              </ModalField>
             </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeDialog}
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={createMutation.isPending || updateMutation.isPending}
-                className="bg-blue-600 hover:bg-blue-500 text-white"
-              >
-                {editingUser ? 'Update' : 'Create'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+          </ModalSection>
+          <ModalFooter>
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit">{saveMutation.isPending ? 'Saving…' : 'Save'}</Button>
+          </ModalFooter>
+        </form>
+      </Modal>
     </div>
-  )
+  );
 }

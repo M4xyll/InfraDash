@@ -1,0 +1,6 @@
+node_modules/
+.next/
+.next-rebuilt/
+dist/
+data/
+.env

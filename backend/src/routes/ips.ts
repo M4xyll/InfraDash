@@ -1,12 +1,12 @@
 import { Router, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { AuthRequest } from '../types/index.js';
+import { prisma } from '../lib/prisma.js';
+import { logAuditFromRequest } from '../services/audit.service.js';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get all IPs
 router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
@@ -84,6 +84,13 @@ router.post(
           vm: { select: { id: true, name: true } },
         },
       });
+      await logAuditFromRequest(req, {
+        action: 'create',
+        entityType: 'ip',
+        entityId: ip.id,
+        summary: `Created IP ${ip.address}`,
+        details: { type: ip.type, status: ip.status, server: ip.server?.name, vm: ip.vm?.name },
+      });
       res.status(201).json({ success: true, data: ip });
     } catch (error) {
       if (String(error).includes('Unique constraint')) {
@@ -125,6 +132,13 @@ router.put(
           vm: { select: { id: true, name: true } },
         },
       });
+      await logAuditFromRequest(req, {
+        action: 'update',
+        entityType: 'ip',
+        entityId: ip.id,
+        summary: `Updated IP ${ip.address}`,
+        details: { type: ip.type, status: ip.status, server: ip.server?.name, vm: ip.vm?.name },
+      });
       res.json({ success: true, data: ip });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to update IP' });
@@ -139,7 +153,14 @@ router.delete(
   requirePermission('delete'),
   async (req: AuthRequest, res: Response) => {
     try {
-      await prisma.iPAddress.delete({ where: { id: req.params.id } });
+      const ip = await prisma.iPAddress.delete({ where: { id: req.params.id } });
+      await logAuditFromRequest(req, {
+        action: 'delete',
+        entityType: 'ip',
+        entityId: ip.id,
+        summary: `Deleted IP ${ip.address}`,
+        details: { type: ip.type, status: ip.status },
+      });
       res.json({ success: true, message: 'IP deleted' });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to delete IP' });

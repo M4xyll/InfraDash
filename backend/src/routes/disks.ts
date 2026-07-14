@@ -1,12 +1,12 @@
 import { Router, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { AuthRequest } from '../types/index.js';
+import { prisma } from '../lib/prisma.js';
+import { logAuditFromRequest } from '../services/audit.service.js';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get all disks
 router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
@@ -85,6 +85,13 @@ router.post(
         data: { vmId, name, size, type, comment },
         include: { vm: { select: { id: true, name: true } } },
       });
+      await logAuditFromRequest(req, {
+        action: 'create',
+        entityType: 'disk',
+        entityId: disk.id,
+        summary: `Created disk ${disk.name || disk.type}`,
+        details: { vm: disk.vm?.name, size: disk.size, type: disk.type },
+      });
       res.status(201).json({ success: true, data: disk });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to create disk' });
@@ -118,6 +125,13 @@ router.put(
         data: { vmId, name, size, type, comment },
         include: { vm: { select: { id: true, name: true } } },
       });
+      await logAuditFromRequest(req, {
+        action: 'update',
+        entityType: 'disk',
+        entityId: disk.id,
+        summary: `Updated disk ${disk.name || disk.type}`,
+        details: { vm: disk.vm?.name, size: disk.size, type: disk.type },
+      });
       res.json({ success: true, data: disk });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to update disk' });
@@ -132,7 +146,14 @@ router.delete(
   requirePermission('delete'),
   async (req: AuthRequest, res: Response) => {
     try {
-      await prisma.disk.delete({ where: { id: req.params.id } });
+      const disk = await prisma.disk.delete({ where: { id: req.params.id } });
+      await logAuditFromRequest(req, {
+        action: 'delete',
+        entityType: 'disk',
+        entityId: disk.id,
+        summary: `Deleted disk ${disk.name || disk.type}`,
+        details: { size: disk.size, type: disk.type },
+      });
       res.json({ success: true, message: 'Disk deleted' });
     } catch {
       res.status(500).json({ success: false, error: 'Failed to delete disk' });

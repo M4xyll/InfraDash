@@ -1,420 +1,286 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from '@/hooks/useAuth'
-import { infraApi, IPAddress, VM, Server } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
-import { Plus, MoreHorizontal, Pencil, Trash2, Search, Globe } from 'lucide-react'
+import { FormEvent, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { IPAddress, infraApi } from '@/lib/api';
+import { useAuth } from '@/hooks/use-auth';
+import { useDeferredDelete } from '@/hooks/use-deferred-delete';
+import { CommentIcon, DeleteIcon, EditIcon, GlobeNetworkIcon, PlusIcon, SearchIcon, ServerIcon, VmIcon } from '@/components/icons';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Modal, ModalField, ModalFooter, ModalSection } from '@/components/ui/modal';
+import { Select } from '@/components/ui/select';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import { MetricStrip, PageIntro, Panel } from '@/components/page-kit';
 
-const statusColors = {
-  FREE: 'success',
-  IN_USE: 'info',
-  RESERVED: 'warning',
-} as const
-
-const typeColors = {
-  RESERVED: 'secondary',
-  CLIENT: 'default',
-  NODE: 'outline',
-} as const
+type IPForm = {
+  address: string;
+  type: 'RESERVED' | 'CLIENT' | 'NODE';
+  status: 'FREE' | 'IN_USE' | 'RESERVED';
+  targetType: 'SERVER' | 'VM';
+  serverId: string;
+  vmId: string;
+  comment: string;
+};
 
 export default function IPsPage() {
-  const { token, canCreate, canUpdate, canDelete } = useAuth()
-  const queryClient = useQueryClient()
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [typeFilter, setTypeFilter] = useState<string>('all')
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [editingIP, setEditingIP] = useState<IPAddress | null>(null)
-  const [formData, setFormData] = useState({
+  const { token, canCreate, canUpdate, canDelete } = useAuth();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<IPAddress | null>(null);
+  const [form, setForm] = useState<IPForm>({
     address: '',
-    type: 'NODE' as 'RESERVED' | 'CLIENT' | 'NODE',
-    status: 'FREE' as 'FREE' | 'IN_USE' | 'RESERVED',
+    type: 'NODE',
+    status: 'FREE',
+    targetType: 'SERVER',
     serverId: '',
     vmId: '',
     comment: '',
-  })
+  });
 
-  const { data: ipsData, isLoading } = useQuery({
-    queryKey: ['ips'],
-    queryFn: () => infraApi.getIPs(token!),
-    enabled: !!token,
-  })
+  const ips = useQuery({ queryKey: ['ips'], queryFn: () => infraApi.getIPs(token!), enabled: Boolean(token) });
+  const servers = useQuery({ queryKey: ['servers'], queryFn: () => infraApi.getServers(token!), enabled: Boolean(token) });
+  const vms = useQuery({ queryKey: ['vms'], queryFn: () => infraApi.getVMs(token!), enabled: Boolean(token) });
 
-  const { data: serversData } = useQuery({
-    queryKey: ['servers'],
-    queryFn: () => infraApi.getServers(token!),
-    enabled: !!token,
-  })
-
-  const { data: vmsData } = useQuery({
-    queryKey: ['vms'],
-    queryFn: () => infraApi.getVMs(token!),
-    enabled: !!token,
-  })
-
-  const createMutation = useMutation({
-    mutationFn: (data: Partial<IPAddress>) => infraApi.createIP(token!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ips'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
-      closeDialog()
+  const saveMutation = useMutation({
+    mutationFn: (payload: Partial<IPAddress>) =>
+      editing ? infraApi.updateIP(token!, editing.id, payload) : infraApi.createIP(token!, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['ips'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['graph'] }),
+      ]);
+      setOpen(false);
     },
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<IPAddress> }) =>
-      infraApi.updateIP(token!, id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ips'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
-      closeDialog()
-    },
-  })
+  });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => infraApi.deleteIP(token!, id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ips'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['ips'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['graph'] }),
+      ]);
     },
-  })
+  });
 
-  const ips = ipsData?.data || []
-  const servers = serversData?.data || []
-  const vms = vmsData?.data || []
+  const { hiddenIds, scheduleDelete } = useDeferredDelete<IPAddress>({
+    namespace: 'ips',
+    getId: (item) => item.id,
+    getLabel: (item) => item.address,
+    onCommit: async (item) => {
+      await deleteMutation.mutateAsync(item.id);
+    },
+  });
 
-  const filteredIPs = ips.filter((ip) => {
-    const matchesSearch =
-      ip.address.includes(search) ||
-      ip.comment?.toLowerCase().includes(search.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || ip.status === statusFilter
-    const matchesType = typeFilter === 'all' || ip.type === typeFilter
-    return matchesSearch && matchesStatus && matchesType
-  })
+  const ipList = ips.data?.data || [];
+  const serverList = servers.data?.data || [];
+  const vmList = vms.data?.data || [];
+  const filtered = useMemo(
+    () =>
+      ipList.filter((item) => {
+        const matchesSearch =
+          item.address.includes(search) || item.comment?.toLowerCase().includes(search.toLowerCase());
+        const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
+        const matchesType = typeFilter === 'all' || item.type === typeFilter;
+        return Boolean(matchesSearch) && matchesStatus && matchesType;
+      }),
+    [ipList, search, statusFilter, typeFilter],
+  );
+  const visible = filtered.filter((item) => !hiddenIds.has(item.id));
 
-  const openCreateDialog = () => {
-    setEditingIP(null)
-    setFormData({
-      address: '',
-      type: 'NODE',
-      status: 'FREE',
-      serverId: '',
-      vmId: '',
-      comment: '',
-    })
-    setIsDialogOpen(true)
+  function openCreate() {
+    setEditing(null);
+    setForm({ address: '', type: 'NODE', status: 'FREE', targetType: 'SERVER', serverId: '', vmId: '', comment: '' });
+    setOpen(true);
   }
 
-  const openEditDialog = (ip: IPAddress) => {
-    setEditingIP(ip)
-    setFormData({
-      address: ip.address,
-      type: ip.type,
-      status: ip.status,
-      serverId: ip.serverId || '',
-      vmId: ip.vmId || '',
-      comment: ip.comment || '',
-    })
-    setIsDialogOpen(true)
+  function openEdit(item: IPAddress) {
+    setEditing(item);
+    setForm({
+      address: item.address,
+      type: item.type,
+      status: item.status,
+      targetType: item.vmId ? 'VM' : 'SERVER',
+      serverId: item.serverId || '',
+      vmId: item.vmId || '',
+      comment: item.comment || '',
+    });
+    setOpen(true);
   }
 
-  const closeDialog = () => {
-    setIsDialogOpen(false)
-    setEditingIP(null)
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const data = {
-      ...formData,
-      serverId: formData.serverId || undefined,
-      vmId: formData.vmId || undefined,
-    }
-    if (editingIP) {
-      updateMutation.mutate({ id: editingIP.id, data })
-    } else {
-      createMutation.mutate(data)
-    }
-  }
-
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this IP address?')) {
-      deleteMutation.mutate(id)
-    }
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    saveMutation.mutate({
+      ...form,
+      serverId: form.serverId || undefined,
+      vmId: form.vmId || undefined,
+    });
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">IP Addresses</h1>
-        {canCreate && (
-          <Button onClick={openCreateDialog}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add IP
-          </Button>
-        )}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search IPs..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
+    <div className="space-y-6">
+      <PageIntro
+        eyebrow="Address inventory"
+        icon={<GlobeNetworkIcon className="h-4 w-4" />}
+        title="Control availability and assignments across the address space."
+        copy="The IP panel keeps type, status, and attachment visible so free, reserved, and in-use ranges are easy to audit."
+        actions={canCreate ? <Button onClick={openCreate}><PlusIcon className="mr-2 h-4 w-4" />Add IP</Button> : null}
+      />
+      <MetricStrip
+        items={[
+          { label: 'Visible IPs', value: visible.length, caption: 'Addresses matching the current filters', icon: <GlobeNetworkIcon className="h-5 w-5" /> },
+          { label: 'Free pool', value: visible.filter((item) => item.status === 'FREE').length, caption: 'Unassigned addresses currently visible', icon: <GlobeNetworkIcon className="h-5 w-5" /> },
+          { label: 'Reserved', value: visible.filter((item) => item.status === 'RESERVED').length, caption: 'Held-back records in the current view', icon: <ServerIcon className="h-5 w-5" /> },
+          { label: 'Client IPs', value: visible.filter((item) => item.type === 'CLIENT').length, caption: 'Client-facing addresses currently in scope', icon: <VmIcon className="h-5 w-5" /> },
+        ]}
+      />
+      <Panel
+        title="Address records"
+        icon={<GlobeNetworkIcon className="h-5 w-5" />}
+        copy="Search by IP or comment, then refine by status or address type."
+        toolbar={
+          <div className="flex w-full flex-col gap-3 xl:flex-row xl:justify-end">
+            <div className="relative xl:max-w-sm">
+              <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-text)]" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search IPs…" className="pl-11" />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="FREE">Free</SelectItem>
-                <SelectItem value="IN_USE">In Use</SelectItem>
-                <SelectItem value="RESERVED">Reserved</SelectItem>
-              </SelectContent>
+            <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="xl:max-w-[180px]">
+              <option value="all">All status</option>
+              <option value="FREE">FREE</option>
+              <option value="IN_USE">IN_USE</option>
+              <option value="RESERVED">RESERVED</option>
             </Select>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="NODE">Node</SelectItem>
-                <SelectItem value="CLIENT">Client</SelectItem>
-                <SelectItem value="RESERVED">Reserved</SelectItem>
-              </SelectContent>
+            <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="xl:max-w-[180px]">
+              <option value="all">All types</option>
+              <option value="NODE">NODE</option>
+              <option value="CLIENT">CLIENT</option>
+              <option value="RESERVED">RESERVED</option>
             </Select>
           </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading...</div>
-          ) : filteredIPs.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              {search || statusFilter !== 'all' || typeFilter !== 'all'
-                ? 'No IPs found matching your filters.'
-                : 'No IP addresses yet.'}
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Address</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Assigned To</TableHead>
-                  <TableHead>Comment</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredIPs.map((ip) => (
-                  <TableRow key={ip.id}>
-                    <TableCell className="font-mono font-medium">
-                      <div className="flex items-center gap-2">
-                        <Globe className="h-4 w-4 text-muted-foreground" />
-                        {ip.address}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusColors[ip.status]}>{ip.status}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={typeColors[ip.type]}>{ip.type}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {ip.vm?.name || ip.server?.name || '-'}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate">
-                      {ip.comment || '-'}
-                    </TableCell>
-                    <TableCell>
-                      {(canUpdate || canDelete) && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {canUpdate && (
-                              <DropdownMenuItem onClick={() => openEditDialog(ip)}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Edit
-                              </DropdownMenuItem>
-                            )}
-                            {canDelete && (
-                              <DropdownMenuItem
-                                onClick={() => handleDelete(ip.id)}
-                                className="text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingIP ? 'Edit IP Address' : 'Add IP Address'}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="address">IP Address</Label>
-              <Input
-                id="address"
-                value={formData.address}
-                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                placeholder="192.168.1.100"
-                required
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Status</Label>
-                <Select
-                  value={formData.status}
-                  onValueChange={(value: 'FREE' | 'IN_USE' | 'RESERVED') =>
-                    setFormData({ ...formData, status: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="FREE">Free</SelectItem>
-                    <SelectItem value="IN_USE">In Use</SelectItem>
-                    <SelectItem value="RESERVED">Reserved</SelectItem>
-                  </SelectContent>
+        }
+      >
+        <Table>
+          <THead><TR><TH>Address</TH><TH>Status</TH><TH>Type</TH><TH>Assigned</TH><TH>Comment</TH><TH>Actions</TH></TR></THead>
+          <TBody>
+            {visible.map((item) => (
+              <TR key={item.id}>
+                <TD className="font-mono font-semibold">{item.address}</TD>
+                <TD><Badge tone={item.status === 'FREE' ? 'accent' : item.status === 'RESERVED' ? 'signal' : 'neutral'}>{item.status}</Badge></TD>
+                <TD>{item.type}</TD>
+                <TD>{item.vm?.name || item.server?.name || '-'}</TD>
+                <TD className="max-w-[260px] text-[var(--muted-text)]">{item.comment || '-'}</TD>
+                <TD>
+                  <div className="flex gap-2">
+                    {canUpdate ? <Button variant="ghost" onClick={() => openEdit(item)}><EditIcon className="h-4 w-4" /></Button> : null}
+                    {canDelete ? <Button variant="ghost" onClick={() => scheduleDelete(item)}><DeleteIcon className="h-4 w-4 text-[var(--danger-color)]" /></Button> : null}
+                  </div>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </Panel>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editing ? 'Edit IP' : 'Create IP'}
+        description="Capture the address, its role, availability state, and any current assignment to a server or VM."
+      >
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <ModalSection title="Addressing" icon={<GlobeNetworkIcon className="h-4 w-4" />} copy="Core details for allocation, reservation, and assignment tracking.">
+            <div className="grid gap-4 md:grid-cols-2">
+              <ModalField label="IP address" icon={<GlobeNetworkIcon className="h-4 w-4" />}>
+                <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} required />
+              </ModalField>
+              <ModalField label="Type" icon={<ServerIcon className="h-4 w-4" />}>
+                <Select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as IPForm['type'] })}>
+                  <option value="NODE">NODE</option>
+                  <option value="CLIENT">CLIENT</option>
+                  <option value="RESERVED">RESERVED</option>
                 </Select>
+              </ModalField>
+              <ModalField label="Status" icon={<GlobeNetworkIcon className="h-4 w-4" />}>
+                <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as IPForm['status'] })}>
+                  <option value="FREE">FREE</option>
+                  <option value="IN_USE">IN_USE</option>
+                  <option value="RESERVED">RESERVED</option>
+                </Select>
+              </ModalField>
+            </div>
+          </ModalSection>
+          <ModalSection title="Assignment" icon={<ServerIcon className="h-4 w-4" />} copy="Choose what this address is assigned to, then pick the target object.">
+            <div className="space-y-4">
+              <div className="inline-flex rounded-full border bg-[var(--surface-strong)] p-1">
+                <button
+                  type="button"
+                  className={cn(
+                    'rounded-full px-4 py-2 text-sm font-semibold transition',
+                    form.targetType === 'SERVER'
+                      ? 'bg-[var(--text-color)] text-[var(--surface-strong)]'
+                      : 'text-[var(--muted-text)]',
+                  )}
+                  onClick={() => setForm({ ...form, targetType: 'SERVER', vmId: '' })}
+                >
+                  <ServerIcon className="mr-2 inline h-4 w-4" />
+                  Server Assignment
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    'rounded-full px-4 py-2 text-sm font-semibold transition',
+                    form.targetType === 'VM'
+                      ? 'bg-[var(--text-color)] text-[var(--surface-strong)]'
+                      : 'text-[var(--muted-text)]',
+                  )}
+                  onClick={() => setForm({ ...form, targetType: 'VM', serverId: '' })}
+                >
+                  <VmIcon className="mr-2 inline h-4 w-4" />
+                  VM Assignment
+                </button>
               </div>
-              <div className="space-y-2">
-                <Label>Type</Label>
-                <Select
-                  value={formData.type}
-                  onValueChange={(value: 'RESERVED' | 'CLIENT' | 'NODE') =>
-                    setFormData({ ...formData, type: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="NODE">Node</SelectItem>
-                    <SelectItem value="CLIENT">Client</SelectItem>
-                    <SelectItem value="RESERVED">Reserved</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="grid gap-4 md:grid-cols-1">
+                {form.targetType === 'SERVER' ? (
+                  <ModalField label="Server target" icon={<ServerIcon className="h-4 w-4" />}>
+                    <Select value={form.serverId} onChange={(e) => setForm({ ...form, serverId: e.target.value, vmId: '' })}>
+                      <option value="">Select a server</option>
+                      {serverList.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                    </Select>
+                  </ModalField>
+                ) : (
+                  <ModalField label="VM target" icon={<VmIcon className="h-4 w-4" />}>
+                    <Select value={form.vmId} onChange={(e) => setForm({ ...form, vmId: e.target.value, serverId: '' })}>
+                      <option value="">Select a VM</option>
+                      {vmList.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                    </Select>
+                  </ModalField>
+                )}
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Assign to Server (optional)</Label>
-              <Select
-                value={formData.serverId || 'none'}
-                onValueChange={(value) => setFormData({ ...formData, serverId: value === 'none' ? '' : value, vmId: '' })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select server" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {servers.map((server) => (
-                    <SelectItem key={server.id} value={server.id}>
-                      {server.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Assign to VM (optional)</Label>
-              <Select
-                value={formData.vmId || 'none'}
-                onValueChange={(value) => setFormData({ ...formData, vmId: value === 'none' ? '' : value, serverId: '' })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select VM" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {vms.map((vm) => (
-                    <SelectItem key={vm.id} value={vm.id}>
-                      {vm.name} ({vm.server?.name})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="comment">Comment</Label>
-              <Input
-                id="comment"
-                value={formData.comment}
-                onChange={(e) => setFormData({ ...formData, comment: e.target.value })}
-                placeholder="Optional notes"
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeDialog}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
-                {editingIP ? 'Update' : 'Create'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+          </ModalSection>
+          <ModalSection title="Notes" icon={<CommentIcon className="h-4 w-4" />}>
+            <ModalField label="Comment" icon={<CommentIcon className="h-4 w-4" />}>
+              <Textarea value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} />
+            </ModalField>
+          </ModalSection>
+          <ModalFooter>
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit">{saveMutation.isPending ? 'Saving…' : 'Save'}</Button>
+          </ModalFooter>
+        </form>
+      </Modal>
     </div>
-  )
+  );
 }

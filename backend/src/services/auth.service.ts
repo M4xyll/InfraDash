@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-
-const prisma = new PrismaClient();
+import { prisma } from '../lib/prisma.js';
 
 export async function registerUser(email: string, password: string, name: string) {
   const existingUser = await prisma.user.findUnique({ where: { email } });
@@ -128,7 +126,7 @@ export async function createUser(
 
 export async function updateUser(
   id: string,
-  data: { name?: string; email?: string; role?: 'ADMIN' | 'OPERATOR' | 'VIEWER' }
+  data: { name?: string; email?: string; role?: 'ADMIN' | 'OPERATOR' | 'VIEWER'; password?: string }
 ) {
   if (data.email) {
     const existingUser = await prisma.user.findFirst({
@@ -139,9 +137,19 @@ export async function updateUser(
     }
   }
 
+  const updateData: { name?: string; email?: string; role?: 'ADMIN' | 'OPERATOR' | 'VIEWER'; password?: string } = {
+    name: data.name,
+    email: data.email,
+    role: data.role,
+  };
+
+  if (data.password) {
+    updateData.password = await bcrypt.hash(data.password, 10);
+  }
+
   return prisma.user.update({
     where: { id },
-    data,
+    data: updateData,
     select: {
       id: true,
       email: true,

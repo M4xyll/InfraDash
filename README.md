@@ -80,31 +80,33 @@
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
 - Git
 
-### One-Command Deploy
+### VPS Test Deploy
 
 ```bash
 # Clone the repository
 git clone https://github.com/M4xyll/infradash.git
 cd infradash
 
-# Copy environment file
-cp .env.example .env
+# Copy production environment file
+cp .env.production.example .env
 
-# Start all services
-docker-compose up -d --build
+# Edit .env for your VPS IP/domain and secrets
+$EDITOR .env
 
-# Run database migrations and seed
-docker exec -it $(docker ps -qf "name=backend") npx prisma migrate dev --name init
-docker exec -it $(docker ps -qf "name=backend") npx prisma db seed
+# Start app stack
+docker compose up -d --build
+
+# Seed once if you want demo accounts/data
+docker compose exec backend npx prisma db seed
 ```
 
 ### Access the Application
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| Frontend | `http://localhost:4781` | Web dashboard |
-| Backend | `http://localhost:4782/api` | REST API |
-| Database | `localhost:5437` | PostgreSQL |
+| Frontend | `http://YOUR_SERVER:3000` | Web dashboard |
+| Backend | `http://YOUR_SERVER:3001/api` | REST API |
+| Database | `YOUR_SERVER:5432` | PostgreSQL |
 
 ### Default Login
 
@@ -129,28 +131,49 @@ Create a `.env` file in the root directory:
 ```env
 # Database
 POSTGRES_USER=infrauser
-POSTGRES_PASSWORD=your_secure_password
+POSTGRES_PASSWORD=change_this_password
 POSTGRES_DB=infra_db
+DATABASE_URL=postgresql://infrauser:change_this_password@db:5432/infra_db
 
 # Backend
-JWT_SECRET=your_super_secret_jwt_key_change_this
+JWT_SECRET=replace_with_a_long_random_secret
 JWT_EXPIRES_IN=7d
-NODE_ENV=production
-CORS_ORIGIN=*
+CORS_ORIGIN=http://YOUR_SERVER_IP_OR_DOMAIN:3000
 
-# Frontend (set to your server IP/domain in production)
-NEXT_PUBLIC_API_URL=http://localhost:4782/api
+# Frontend
+NEXT_PUBLIC_API_URL=http://YOUR_SERVER_IP_OR_DOMAIN:3001/api
 ```
 
 ### Production Deployment
 
-For production, make sure to:
+For a VPS test deployment, make sure to:
 
 1. **Change all default passwords** in `.env`
 2. **Set a strong `JWT_SECRET`** (use `openssl rand -base64 32`)
 3. **Configure `CORS_ORIGIN`** to your frontend domain
 4. **Set `NEXT_PUBLIC_API_URL`** to your backend URL
-5. **Use HTTPS** with a reverse proxy (nginx, Caddy, Traefik)
+5. **Persist `postgres_data` and `backend_data` volumes**
+6. **Use HTTPS** with a reverse proxy (nginx, Caddy, Traefik)
+
+### Monitoring Agent
+
+The monitoring agent is intentionally deployed **separately** from the frontend/backend stack.
+
+- App stack: `docker compose up -d --build`
+- Agent: run on each monitored server independently
+- Agent source: [monitoring-agent](./monitoring-agent)
+
+Example standalone run on a monitored host:
+
+```bash
+cd /opt/infradash-monitor-agent
+npm install --omit=dev
+MONITOR_API_URL="http://YOUR_DASHBOARD_HOST:3001/api/monitoring/ingest" \
+MONITOR_TOKEN="paste-issued-token-here" \
+npm start
+```
+
+For long-running usage, prefer a systemd service on the monitored machine. See [monitoring-agent/README.md](./monitoring-agent/README.md).
 
 #### Example with Nginx Reverse Proxy
 
@@ -163,7 +186,7 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location / {
-        proxy_pass http://localhost:4781;
+        proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -171,7 +194,7 @@ server {
     }
 
     location /api {
-        proxy_pass http://localhost:4782/api;
+        proxy_pass http://localhost:3001/api;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
@@ -201,7 +224,7 @@ server {
 ```
 infradash/
 ├── docker-compose.yml          # Container orchestration
-├── .env.example                 # Environment template
+├── .env.production.example      # Production/VPS environment template
 │
 ├── backend/
 │   ├── Dockerfile
@@ -230,8 +253,7 @@ infradash/
 │       ├── hooks/              # Custom React hooks
 │       └── lib/                # API client, utilities
 │
-└── scripts/
-    └── init-db.sh              # Database initialization
+└── monitoring-agent/           # Standalone host telemetry agent
 ```
 
 ---
@@ -351,10 +373,11 @@ npx prisma studio
 - [X] **Server Support** - BYO Servers to connect them to your VMs
 - [X] **IP Integration** - Add your IPs to monitor used or not
 - [X] **2D Draggable Canvas** - Quickly view your services in a detailed canvas
-- [ ] **Export/Import** — Backup and restore configurations
 - [ ] **Monitoring Integration** — CPU, RAM, disk usage stats
-- [ ] **3D Workspace Canvas** - Overkill feature just for fun
+- [ ] **Alerts & Notifications** — Email/webhook alerts for issues
 - [ ] **Proxmox Sync** — Auto-import VMs from Proxmox API
+- [ ] **Pelican Panel Sync** — Auto-import game servers
+- [ ] **Export/Import** — Backup and restore configurations
 - [ ] **Audit Logs** — Track who changed what and when
 - [ ] **Multi-tenancy** — Separate workspaces for teams
 - [ ] **API Keys** — Programmatic access without JWT
@@ -375,7 +398,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the GPL 3.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 

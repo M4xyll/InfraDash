@@ -1,387 +1,218 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from '@/hooks/useAuth'
-import { infraApi, Disk, VM } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
-import { Plus, MoreHorizontal, Pencil, Trash2, Search, HardDrive, Monitor } from 'lucide-react'
-import { formatBytes } from '@/lib/utils'
+import { FormEvent, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Disk, infraApi } from '@/lib/api';
+import { useAuth } from '@/hooks/use-auth';
+import { useDeferredDelete } from '@/hooks/use-deferred-delete';
+import { CommentIcon, DatabaseStackIcon, DeleteIcon, DiskIcon, EditIcon, PlusIcon, SearchIcon, VmIcon } from '@/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Modal, ModalField, ModalFooter, ModalSection } from '@/components/ui/modal';
+import { Select } from '@/components/ui/select';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { formatBytes } from '@/lib/utils';
+import { MetricStrip, PageIntro, Panel } from '@/components/page-kit';
 
-const typeColors = {
-  HDD: 'secondary',
-  SSD: 'default',
-  NVME: 'info',
-} as const
+type DiskForm = {
+  vmId: string;
+  name: string;
+  size: number;
+  type: 'HDD' | 'SSD' | 'NVME';
+  comment: string;
+};
 
 export default function DisksPage() {
-  const { token, canCreate, canUpdate, canDelete } = useAuth()
-  const queryClient = useQueryClient()
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<string>('all')
-  const [vmFilter, setVmFilter] = useState<string>('all')
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [editingDisk, setEditingDisk] = useState<Disk | null>(null)
-  const [formData, setFormData] = useState({
-    vmId: '',
-    name: '',
-    size: 50,
-    type: 'SSD' as 'HDD' | 'SSD' | 'NVME',
-    comment: '',
-  })
+  const { token, canCreate, canUpdate, canDelete } = useAuth();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [vmFilter, setVmFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Disk | null>(null);
+  const [form, setForm] = useState<DiskForm>({ vmId: '', name: '', size: 50, type: 'SSD', comment: '' });
 
-  const { data: disksData, isLoading } = useQuery({
-    queryKey: ['disks'],
-    queryFn: () => infraApi.getDisks(token!),
-    enabled: !!token,
-  })
+  const disks = useQuery({ queryKey: ['disks'], queryFn: () => infraApi.getDisks(token!), enabled: Boolean(token) });
+  const vms = useQuery({ queryKey: ['vms'], queryFn: () => infraApi.getVMs(token!), enabled: Boolean(token) });
 
-  const { data: vmsData } = useQuery({
-    queryKey: ['vms'],
-    queryFn: () => infraApi.getVMs(token!),
-    enabled: !!token,
-  })
-
-  const createMutation = useMutation({
-    mutationFn: (data: Partial<Disk>) => infraApi.createDisk(token!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['disks'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
-      closeDialog()
+  const saveMutation = useMutation({
+    mutationFn: (payload: typeof form) =>
+      editing ? infraApi.updateDisk(token!, editing.id, payload) : infraApi.createDisk(token!, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['disks'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['graph'] }),
+      ]);
+      setOpen(false);
     },
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Disk> }) =>
-      infraApi.updateDisk(token!, id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['disks'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
-      closeDialog()
-    },
-  })
+  });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => infraApi.deleteDisk(token!, id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['disks'] })
-      queryClient.invalidateQueries({ queryKey: ['tree'] })
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['disks'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['graph'] }),
+      ]);
     },
-  })
+  });
 
-  const disks = disksData?.data || []
-  const vms = vmsData?.data || []
+  const { hiddenIds, scheduleDelete } = useDeferredDelete<Disk>({
+    namespace: 'disks',
+    getId: (item) => item.id,
+    getLabel: (item) => item.name || 'Unnamed disk',
+    onCommit: async (item) => {
+      await deleteMutation.mutateAsync(item.id);
+    },
+  });
 
-  const filteredDisks = disks.filter((disk) => {
-    const matchesSearch =
-      disk.name?.toLowerCase().includes(search.toLowerCase()) ||
-      disk.vm?.name.toLowerCase().includes(search.toLowerCase())
-    const matchesType = typeFilter === 'all' || disk.type === typeFilter
-    const matchesVM = vmFilter === 'all' || disk.vmId === vmFilter
-    return matchesSearch && matchesType && matchesVM
-  })
+  const vmList = vms.data?.data || [];
+  const diskList = disks.data?.data || [];
+  const filtered = useMemo(
+    () =>
+      diskList.filter((item) => {
+        const matchesSearch =
+          item.name?.toLowerCase().includes(search.toLowerCase()) ||
+          item.vm?.name.toLowerCase().includes(search.toLowerCase());
+        const matchesVm = vmFilter === 'all' || item.vmId === vmFilter;
+        const matchesType = typeFilter === 'all' || item.type === typeFilter;
+        return Boolean(matchesSearch) && matchesVm && matchesType;
+      }),
+    [diskList, search, typeFilter, vmFilter],
+  );
+  const visible = filtered.filter((item) => !hiddenIds.has(item.id));
 
-  const openCreateDialog = () => {
-    setEditingDisk(null)
-    setFormData({
-      vmId: vms[0]?.id || '',
-      name: '',
-      size: 50,
-      type: 'SSD',
-      comment: '',
-    })
-    setIsDialogOpen(true)
+  function openCreate() {
+    setEditing(null);
+    setForm({ vmId: vmList[0]?.id || '', name: '', size: 50, type: 'SSD', comment: '' });
+    setOpen(true);
   }
 
-  const openEditDialog = (disk: Disk) => {
-    setEditingDisk(disk)
-    setFormData({
-      vmId: disk.vmId,
-      name: disk.name || '',
-      size: disk.size,
-      type: disk.type,
-      comment: disk.comment || '',
-    })
-    setIsDialogOpen(true)
+  function openEdit(item: Disk) {
+    setEditing(item);
+    setForm({
+      vmId: item.vmId,
+      name: item.name || '',
+      size: item.size,
+      type: item.type,
+      comment: item.comment || '',
+    });
+    setOpen(true);
   }
 
-  const closeDialog = () => {
-    setIsDialogOpen(false)
-    setEditingDisk(null)
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    saveMutation.mutate(form);
   }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (editingDisk) {
-      updateMutation.mutate({ id: editingDisk.id, data: formData })
-    } else {
-      createMutation.mutate(formData)
-    }
-  }
-
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this disk?')) {
-      deleteMutation.mutate(id)
-    }
-  }
-
-  // Calculate total storage
-  const totalStorage = filteredDisks.reduce((acc, disk) => acc + disk.size, 0)
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Disks</h1>
-          <p className="text-muted-foreground">
-            Total: {formatBytes(totalStorage)} across {filteredDisks.length} disks
-          </p>
-        </div>
-        {canCreate && vms.length > 0 && (
-          <Button onClick={openCreateDialog}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Disk
-          </Button>
-        )}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search disks..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
+    <div className="space-y-6">
+      <PageIntro
+        eyebrow="Storage inventory"
+        icon={<DiskIcon className="h-4 w-4" />}
+        title="Track provisioned capacity by guest system."
+        copy="Manage disks attached to your VMs."
+        actions={canCreate ? <Button onClick={openCreate}><PlusIcon className="mr-2 h-4 w-4" />Add disk</Button> : null}
+      />
+      <MetricStrip
+        items={[
+          { label: 'Visible disks', value: visible.length, caption: 'Volumes matching the filters', icon: <DiskIcon className="h-5 w-5" /> },
+          { label: 'Capacity', value: formatBytes(visible.reduce((sum, item) => sum + item.size, 0)), caption: 'Total capacity in the current result set', icon: <DatabaseStackIcon className="h-5 w-5" /> },
+          { label: 'NVMe volumes', value: visible.filter((item) => item.type === 'NVME').length, caption: 'High-speed disks visible right now', icon: <DiskIcon className="h-5 w-5" /> },
+          { label: 'VM targets', value: new Set(visible.map((item) => item.vmId)).size, caption: 'Guests with attached visible storage', icon: <VmIcon className="h-5 w-5" /> },
+        ]}
+      />
+      <Panel
+        title="Disk records"
+        icon={<DiskIcon className="h-5 w-5" />}
+        copy="Search by disk or VM name and narrow by disk type or VM."
+        toolbar={
+          <div className="flex w-full flex-col gap-3 lg:flex-row lg:justify-end">
+            <div className="relative lg:max-w-sm">
+              <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-text)]" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search disks…" className="pl-11" />
             </div>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="HDD">HDD</SelectItem>
-                <SelectItem value="SSD">SSD</SelectItem>
-                <SelectItem value="NVME">NVMe</SelectItem>
-              </SelectContent>
+            <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="lg:max-w-[160px]">
+              <option value="all">All types</option>
+              <option value="HDD">HDD</option>
+              <option value="SSD">SSD</option>
+              <option value="NVME">NVMe</option>
             </Select>
-            <Select value={vmFilter} onValueChange={setVmFilter}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Filter by VM" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All VMs</SelectItem>
-                {vms.map((vm) => (
-                  <SelectItem key={vm.id} value={vm.id}>
-                    {vm.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+            <Select value={vmFilter} onChange={(e) => setVmFilter(e.target.value)} className="lg:max-w-xs">
+              <option value="all">All VMs</option>
+              {vmList.map((item) => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
             </Select>
           </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading...</div>
-          ) : vms.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Add a VM first before creating disks.
-            </div>
-          ) : filteredDisks.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              {search || typeFilter !== 'all' || vmFilter !== 'all'
-                ? 'No disks found matching your filters.'
-                : 'No disks yet.'}
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>VM</TableHead>
-                  <TableHead>Size</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Comment</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredDisks.map((disk) => (
-                  <TableRow key={disk.id}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <HardDrive className="h-4 w-4 text-muted-foreground" />
-                        {disk.name || 'Unnamed'}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Monitor className="h-3 w-3 text-muted-foreground" />
-                        {disk.vm?.name}
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono">{formatBytes(disk.size)}</TableCell>
-                    <TableCell>
-                      <Badge variant={typeColors[disk.type]}>{disk.type}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate">
-                      {disk.comment || '-'}
-                    </TableCell>
-                    <TableCell>
-                      {(canUpdate || canDelete) && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {canUpdate && (
-                              <DropdownMenuItem onClick={() => openEditDialog(disk)}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Edit
-                              </DropdownMenuItem>
-                            )}
-                            {canDelete && (
-                              <DropdownMenuItem
-                                onClick={() => handleDelete(disk.id)}
-                                className="text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingDisk ? 'Edit Disk' : 'Add Disk'}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="vm">VM</Label>
-              <Select
-                value={formData.vmId}
-                onValueChange={(value) => setFormData({ ...formData, vmId: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select VM" />
-                </SelectTrigger>
-                <SelectContent>
-                  {vms.map((vm) => (
-                    <SelectItem key={vm.id} value={vm.id}>
-                      {vm.name} ({vm.server?.name})
-                    </SelectItem>
+        }
+      >
+        <Table>
+          <THead><TR><TH>Name</TH><TH>VM</TH><TH>Size</TH><TH>Type</TH><TH>Comment</TH><TH>Actions</TH></TR></THead>
+          <TBody>
+            {visible.map((item) => (
+              <TR key={item.id}>
+                <TD className="font-semibold">{item.name || 'Unnamed'}</TD>
+                <TD>{item.vm?.name || '-'}</TD>
+                <TD>{formatBytes(item.size)}</TD>
+                <TD>{item.type}</TD>
+                <TD className="max-w-[260px] text-[var(--muted-text)]">{item.comment || '-'}</TD>
+                <TD>
+                  <div className="flex gap-2">
+                    {canUpdate ? <Button variant="ghost" onClick={() => openEdit(item)}><EditIcon className="h-4 w-4" /></Button> : null}
+                    {canDelete ? <Button variant="ghost" onClick={() => scheduleDelete(item)}><DeleteIcon className="h-4 w-4 text-[var(--danger-color)]" /></Button> : null}
+                  </div>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </Panel>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editing ? 'Edit disk' : 'Create disk'}
+        description="Create or edit a disk."
+      >
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <ModalSection title="Storage details" icon={<DiskIcon className="h-4 w-4" />} copy="Disk settings.">
+            <div className="grid gap-4 md:grid-cols-2">
+              <ModalField label="Attached VM" icon={<VmIcon className="h-4 w-4" />}>
+                <Select value={form.vmId} onChange={(e) => setForm({ ...form, vmId: e.target.value })} required>
+                  {vmList.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
                   ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="root, data, logs..."
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="size">Size (GB)</Label>
-                <Input
-                  id="size"
-                  type="number"
-                  min="1"
-                  value={formData.size}
-                  onChange={(e) => setFormData({ ...formData, size: parseInt(e.target.value) || 1 })}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Type</Label>
-                <Select
-                  value={formData.type}
-                  onValueChange={(value: 'HDD' | 'SSD' | 'NVME') =>
-                    setFormData({ ...formData, type: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="HDD">HDD</SelectItem>
-                    <SelectItem value="SSD">SSD</SelectItem>
-                    <SelectItem value="NVME">NVMe</SelectItem>
-                  </SelectContent>
                 </Select>
-              </div>
+              </ModalField>
+              <ModalField label="Disk name" icon={<DiskIcon className="h-4 w-4" />}>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </ModalField>
+              <ModalField label="Size" icon={<DatabaseStackIcon className="h-4 w-4" />}>
+                <Input type="number" min={1} value={form.size} onChange={(e) => setForm({ ...form, size: Number(e.target.value) })} required />
+              </ModalField>
+              <ModalField label="Type" icon={<DiskIcon className="h-4 w-4" />}>
+                <Select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as DiskForm['type'] })}>
+                  <option value="HDD">HDD</option>
+                  <option value="SSD">SSD</option>
+                  <option value="NVME">NVMe</option>
+                </Select>
+              </ModalField>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="comment">Comment</Label>
-              <Input
-                id="comment"
-                value={formData.comment}
-                onChange={(e) => setFormData({ ...formData, comment: e.target.value })}
-                placeholder="Optional notes"
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeDialog}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
-                {editingDisk ? 'Update' : 'Create'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+          </ModalSection>
+          <ModalSection title="Notes" icon={<CommentIcon className="h-4 w-4" />} copy="Optional notes.">
+            <ModalField label="Comment" icon={<CommentIcon className="h-4 w-4" />}>
+              <Textarea value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} />
+            </ModalField>
+          </ModalSection>
+          <ModalFooter>
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit">{saveMutation.isPending ? 'Saving…' : 'Save'}</Button>
+          </ModalFooter>
+        </form>
+      </Modal>
     </div>
-  )
+  );
 }

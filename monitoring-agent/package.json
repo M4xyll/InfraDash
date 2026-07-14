@@ -1,0 +1,10 @@
+{
+  "name": "infradash-monitoring-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone lightweight monitoring agent for InfraDash",
+  "scripts": {
+    "start": "node agent.mjs"
+  }
+}

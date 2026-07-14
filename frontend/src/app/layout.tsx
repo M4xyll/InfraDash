@@ -1,25 +1,38 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
-import './globals.css'
-import { Providers } from './providers'
-
-const inter = Inter({ subsets: ['latin'] })
+import type { Metadata } from 'next';
+import { Providers } from './providers';
+import '@xyflow/react/dist/style.css';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Infrastructure Dashboard',
-  description: 'Self-hosted infrastructure management dashboard',
-}
+  title: 'InfraDash',
+  description: 'Infrastructure management.',
+};
 
 export default function RootLayout({
   children,
-}: {
-  children: React.ReactNode
-}) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var stored = localStorage.getItem('infradash-theme');
+                  var theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                  document.documentElement.dataset.theme = theme;
+                } catch (error) {
+                  document.documentElement.dataset.theme = 'light';
+                }
+              })();
+            `,
+          }}
+        />
+      </head>
+      <body>
         <Providers>{children}</Providers>
       </body>
     </html>
-  )
+  );
 }

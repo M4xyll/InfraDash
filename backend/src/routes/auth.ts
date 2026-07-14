@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
 import { AuthRequest } from '../types/index.js';
 import logger from '../utils/logger.js';
+import { logAudit, logAuditFromRequest } from '../services/audit.service.js';
 
 const router = Router();
 
@@ -34,6 +35,21 @@ router.post(
       });
 
       logger.info(`User logged in: ${email}`);
+      await logAudit({
+        actor: {
+          userId: user.id,
+          email: user.email,
+          role: user.role,
+        },
+        request: {
+          ip: req.ip,
+          userAgent: req.get('user-agent') || undefined,
+        },
+        action: 'login',
+        entityType: 'auth',
+        entityId: user.id,
+        summary: `User ${user.email} logged in`,
+      });
 
       res.json({
         success: true,
@@ -100,6 +116,13 @@ router.post(
       const user = await createUser(email, password, name, role);
 
       logger.info(`User created by admin: ${email} with role ${role}`);
+      await logAuditFromRequest(req, {
+        action: 'create',
+        entityType: 'user',
+        entityId: user.id,
+        summary: `Created user ${user.email}`,
+        details: { role: user.role, name: user.name },
+      });
 
       res.status(201).json({ success: true, data: user });
     } catch (error) {
@@ -118,6 +141,7 @@ router.put(
     body('name').optional().trim().isLength({ min: 2 }),
     body('email').optional().isEmail().normalizeEmail(),
     body('role').optional().isIn(['ADMIN', 'OPERATOR', 'VIEWER']),
+    body('password').optional({ values: 'falsy' }).isLength({ min: 6 }),
   ],
   async (req: AuthRequest, res: Response) => {
     const errors = validationResult(req);
@@ -128,10 +152,17 @@ router.put(
 
     try {
       const { id } = req.params;
-      const { name, email, role } = req.body;
-      const user = await updateUser(id, { name, email, role });
+      const { name, email, role, password } = req.body;
+      const user = await updateUser(id, { name, email, role, password });
 
       logger.info(`User updated: ${user.email}`);
+      await logAuditFromRequest(req, {
+        action: 'update',
+        entityType: 'user',
+        entityId: user.id,
+        summary: `Updated user ${user.email}`,
+        details: { name: user.name, role: user.role, passwordChanged: Boolean(password) },
+      });
 
       res.json({ success: true, data: user });
     } catch (error) {
@@ -152,6 +183,12 @@ router.delete(
       const user = await deleteUser(id, req.user!.userId);
 
       logger.info(`User deleted: ${user.email}`);
+      await logAuditFromRequest(req, {
+        action: 'delete',
+        entityType: 'user',
+        entityId: user.id,
+        summary: `Deleted user ${user.email}`,
+      });
 
       res.json({ success: true, message: 'User deleted' });
     } catch (error) {
