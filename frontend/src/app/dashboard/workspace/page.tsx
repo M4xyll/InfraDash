@@ -738,7 +738,7 @@ function WorkspaceCanvas2D({
     setNodes(attachMonitoringToNodes(structure.nodes, monitoringMap));
     setEdges(structure.edges);
     setTimeout(() => fitView({ padding: 0.18 }), 50);
-  }, [fitView, monitoringMap, setEdges, setNodes, structure.edges, structure.nodes]);
+  }, [fitView, setEdges, setNodes, structure.edges, structure.nodes]);
 
   useEffect(() => {
     setNodes((current) => attachMonitoringToNodes(current, monitoringMap));
