@@ -103,11 +103,25 @@ function readMemoryUsage() {
 
 async function readStorageUsage() {
   try {
-    const { stdout } = await execFileAsync('df', ['-k', '/']);
-    const lines = stdout.trim().split('\n');
-    const fields = lines[lines.length - 1].trim().split(/\s+/);
-    const totalBytes = Number(fields[1]) * 1024;
-    const usedBytes = Number(fields[2]) * 1024;
+    const { stdout } = await execFileAsync('df', ['-kP', '-l']);
+    const lines = stdout.trim().split('\n').slice(1);
+    const excludedFilesystems = new Set(['tmpfs', 'devtmpfs', 'overlay', 'shm', 'squashfs']);
+    const seenFilesystems = new Set();
+    let totalBytes = 0;
+    let usedBytes = 0;
+
+    for (const line of lines) {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length < 6) continue;
+
+      const filesystem = fields[0];
+      if (excludedFilesystems.has(filesystem) || seenFilesystems.has(filesystem)) continue;
+
+      seenFilesystems.add(filesystem);
+      totalBytes += Number(fields[1]) * 1024;
+      usedBytes += Number(fields[2]) * 1024;
+    }
+
     return {
       usedBytes,
       totalBytes,

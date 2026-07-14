@@ -6,7 +6,7 @@ Minimal push agent for live host metrics.
 
 - CPU usage
 - RAM usage
-- Root filesystem usage
+- Total usage across local disks/filesystems
 - Temperature when available
 - Uptime
 

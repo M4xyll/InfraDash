@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { authApi } from '@/lib/api';
 import { useAuth } from '@/hooks/use-auth';
@@ -14,6 +14,7 @@ import { AppPreloader } from '@/components/app-preloader';
 export default function SetupPage() {
   const router = useRouter();
   const { user, completeSetup } = useAuth();
+  const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -39,6 +40,10 @@ export default function SetupPage() {
 
     try {
       await completeSetup({ name, email, password });
+      queryClient.setQueryData(['setup-status'], {
+        success: true,
+        data: { needsSetup: false },
+      });
       router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
